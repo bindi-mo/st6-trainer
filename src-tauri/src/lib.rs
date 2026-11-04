@@ -1,14 +1,25 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
+
+pub mod scanner_ffi;
+pub mod video_types;
+// pub mod video;  // Disabled: using C++ DLL via scanner_ffi instead
+
 #[tauri::command]
 fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
+}
+
+#[tauri::command]
+async fn scan_video(video_path: String) -> Result<scanner_ffi::VideoScanResult, String> {
+    scanner_ffi::scan_video_file(video_path).await
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![greet])
+        .plugin(tauri_plugin_dialog::init())
+        .invoke_handler(tauri::generate_handler![greet, scan_video])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
