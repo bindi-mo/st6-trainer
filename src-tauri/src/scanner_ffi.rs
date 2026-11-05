@@ -2,8 +2,10 @@
 
 use libloading::{Library, Symbol};
 use std::ffi::{CStr, CString};
+use std::fs;
 use std::os::raw::{c_char, c_double, c_int, c_uchar};
 use std::path::{Path, PathBuf};
+use tauri::Manager;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -24,7 +26,7 @@ pub enum ScannerError {
 
 pub type ScannerResult<T> = std::result::Result<T, ScannerError>;
 
-// Frame data matching C struct
+// Frame data matching C struct in scanner_api_2.h
 #[repr(C)]
 #[derive(Debug, Clone)]
 pub struct FrameData {
@@ -107,41 +109,61 @@ pub struct Scanner {
     handle: ScannerHandle,
 }
 
-fn get_dll_path() -> PathBuf {
-    // CARGO_MANIFEST_DIR = src-tauri/
-    // DLL is at project root (st6-trainer/st6_scanner.dll) - ONE level up
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let project_root = manifest_dir.parent().unwrap(); // src-tauri/.. = st6-trainer/
-    let path = project_root.join("st6_scanner.dll");
+/// DLLのパスを解決し、必要に応じて .exe と同じフォルダへ配置する
+fn get_dll_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    let resolver = app.path();
+    let exe_dir = resolver.executable_dir().map_err(|e| e.to_string())?;
+    let target_dll = exe_dir.join("st6_scanner.dll");
 
-    // For tests, also check the test output directory
-    if cfg!(test) {
-        let test_output = manifest_dir
-            .join("target")
-            .join("debug")
-            .join("deps")
-            .join("st6_scanner.dll");
-        if test_output.exists() {
-            eprintln!("DEBUG: Using test output DLL: {:?}", test_output);
-            eprintln!("DEBUG: test_output parent = {:?}", test_output.parent());
-            eprintln!("DEBUG: current_dir = {:?}", std::env::current_dir());
-            return test_output;
+    if !target_dll.exists() {
+        #[cfg(debug_assertions)]
+        {
+            // 開発時 (tauri dev): src-tauri/st6_scanner.dll をコピー
+            let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+            let dev_dll = manifest_dir.join("st6_scanner.dll");
+            if dev_dll.exists() {
+                let _ = fs::copy(&dev_dll, &target_dll);
+            }
+        }
+
+        #[cfg(not(debug_assertions))]
+        {
+            // 本番ビルド時 (tauri build): bundle.resources から取得
+            let resource_dir = resolver.resource_dir().map_err(|e| e.to_string())?;
+            let source_dll = resource_dir.join("st6_scanner.dll");
+            if source_dll.exists() {
+                fs::copy(&source_dll, &target_dll).map_err(|e| e.to_string())?;
+            }
         }
     }
 
-    eprintln!("DEBUG: manifest_dir = {:?}", manifest_dir);
-    eprintln!("DEBUG: project_root = {:?}", project_root);
-    eprintln!("DEBUG: DLL path = {:?}", path);
-    eprintln!("DEBUG: DLL exists = {}", path.exists());
-    eprintln!("DEBUG: current_dir = {:?}", std::env::current_dir());
-    path
+    if target_dll.exists() {
+        Ok(target_dll)
+    } else {
+        Err("st6_scanner.dll could not be resolved or deployed.".into())
+    }
 }
 
 impl Scanner {
     /// Create a new scanner from video file
-    pub fn new<P: AsRef<Path>>(video_path: P, config: Option<ScanConfig>) -> ScannerResult<Self> {
-        let dll_path = get_dll_path();
-        let lib = unsafe { Library::new(&dll_path) }?;
+    pub fn new<P: AsRef<Path>>(
+        app: &tauri::AppHandle,
+        video_path: P,
+        config: Option<ScanConfig>,
+    ) -> ScannerResult<Self> {
+        let dll_path = get_dll_path(app).map_err(ScannerError::Creation)?;
+
+        eprintln!(
+            "[Rust] Scanner::new called with video_path: {:?}",
+            video_path.as_ref()
+        );
+        eprintln!("[Rust] DLL path: {:?}", dll_path);
+        eprintln!("[Rust] DLL exists: {}", dll_path.exists());
+
+        // OpenCVが静的リンクされているため、追加の環境変数や検索パスの設定は不要です。
+        eprintln!("[Rust] Calling Library::new...");
+        let lib = unsafe { Library::new(&dll_path) }.map_err(ScannerError::DllLoad)?;
+        eprintln!("[Rust] Library loaded successfully");
 
         let create: Symbol<
             unsafe extern "C" fn(*const c_char, *const ScanConfig) -> ScannerHandle,
@@ -257,25 +279,91 @@ impl Drop for Scanner {
     }
 }
 
+// Decode packed input byte into Direction and Buttons
+fn decode_inputs(input_bytes: &[c_uchar], count: c_int) -> Vec<InputSignal> {
+    let mut signals = Vec::new();
+    let limit = (count as usize).min(input_bytes.len());
+
+    // インデックスの代わりに .iter() と .take() を使用
+    for &val in input_bytes.iter().take(limit) {
+        let dir_val = val & 0x0F;
+        let btn_val = (val & 0xF0) >> 4;
+
+        let direction = match dir_val {
+            1 => Direction::DownLeft,
+            2 => Direction::Down,
+            3 => Direction::DownRight,
+            4 => Direction::Left,
+            5 => Direction::Neutral,
+            6 => Direction::Right,
+            7 => Direction::UpLeft,
+            8 => Direction::Up,
+            9 => Direction::UpRight,
+            _ => Direction::Neutral,
+        };
+
+        let mut buttons = Vec::new();
+        if (btn_val & 0x01) != 0 {
+            buttons.push(Button::LP);
+        }
+        if (btn_val & 0x02) != 0 {
+            buttons.push(Button::MP);
+        }
+        if (btn_val & 0x04) != 0 {
+            buttons.push(Button::HP);
+        }
+        if (btn_val & 0x08) != 0 {
+            buttons.push(Button::LK);
+        }
+        if (btn_val & 0x10) != 0 {
+            buttons.push(Button::MK);
+        }
+        if (btn_val & 0x20) != 0 {
+            buttons.push(Button::HK);
+        }
+
+        signals.push(InputSignal {
+            direction,
+            buttons,
+            confidence: 1.0,
+        });
+    }
+    signals
+}
+
 // Convenience function for Tauri command
-pub async fn scan_video_file(video_path: String) -> Result<VideoScanResult, String> {
-    let mut scanner = Scanner::new(&video_path, None).map_err(|e| e.to_string())?;
+pub async fn scan_video_file(
+    app: tauri::AppHandle,
+    video_path: String,
+) -> Result<VideoScanResult, String> {
+    eprintln!("[Rust] scan_video_file called with: {}", video_path);
+    let mut scanner = Scanner::new(&app, &video_path, None).map_err(|e| {
+        eprintln!("[Rust] Scanner creation failed: {}", e);
+        e.to_string()
+    })?;
+    eprintln!("[Rust] Scanner created successfully");
 
     let mut frames = Vec::new();
+    let mut frame_count = 0;
     while let Ok(Some(frame)) = scanner.next_frame() {
-        // Convert FrameData (C FFI) to RawFrameLog (Rust types)
         frames.push(convert_frame_data(frame));
+        frame_count += 1;
+        if frame_count % 100 == 0 {
+            eprintln!("[Rust] Processed {} frames...", frame_count);
+        }
     }
+    eprintln!("[Rust] Scan completed, total frames: {}", frame_count);
 
-    Ok(VideoScanResult {
+    let result = VideoScanResult {
         video_path,
         resolution: Resolution::TARGET_1080P,
         fps: scanner.fps(),
         total_frames: scanner.total_frames() as usize,
         duration_ms: (scanner.total_frames() as f64 / scanner.fps()) * 1000.0,
         frames,
-        hud_layout: HudLayout::default(), // TODO: extract from scanner
-    })
+        hud_layout: HudLayout::default(),
+    };
+    Ok(result)
 }
 
 // Convert C FFI FrameData to Rust RawFrameLog
@@ -283,8 +371,8 @@ fn convert_frame_data(frame: FrameData) -> RawFrameLog {
     RawFrameLog {
         frame_index: frame.frame_index as usize,
         timestamp_ms: frame.timestamp_ms,
-        p1_inputs: Vec::new(), // TODO: decode p1_inputs
-        p2_inputs: Vec::new(), // TODO: decode p2_inputs
+        p1_inputs: decode_inputs(&frame.p1_inputs, frame.p1_input_count),
+        p2_inputs: decode_inputs(&frame.p2_inputs, frame.p2_input_count),
         p1_drive_gauge: DriveGaugeState {
             blocks: frame.p1_drive_blocks,
             is_burnout: frame.p1_drive_burnout != 0,
@@ -326,7 +414,6 @@ fn convert_frame_data(frame: FrameData) -> RawFrameLog {
     }
 }
 
-// Types needed by Tauri (defined in video_types.rs)
 pub use crate::video_types::{
     Button, Direction, DriveGaugeState, FrameMeterData, HudLayout, InputSignal, NotificationType,
     PixelRect, RawFrameLog, Resolution, SystemNotification, VideoScanResult,

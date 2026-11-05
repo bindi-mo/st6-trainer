@@ -10,8 +10,11 @@ fn greet(name: &str) -> String {
 }
 
 #[tauri::command]
-async fn scan_video(video_path: String) -> Result<scanner_ffi::VideoScanResult, String> {
-    scanner_ffi::scan_video_file(video_path).await
+async fn scan_video(
+    app: tauri::AppHandle,
+    video_path: String,
+) -> Result<scanner_ffi::VideoScanResult, String> {
+    scanner_ffi::scan_video_file(app, video_path).await
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
