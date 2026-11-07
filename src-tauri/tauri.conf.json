@@ -31,7 +31,9 @@
       "icons/icon.ico"
     ],
     "resources": [
-      "st6_scanner.dll"
+      "st6_scanner.dll",
+      "scripts/sf6_frame_data_processor.py",
+      "frame_data/*.json"
     ]
   }
 }

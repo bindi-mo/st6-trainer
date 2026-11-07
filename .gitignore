@@ -28,3 +28,6 @@ scanner-cpp/build
 *.njsproj
 *.sln
 *.sw?
+
+# cache
+src-tauri/scripts/html_cache
