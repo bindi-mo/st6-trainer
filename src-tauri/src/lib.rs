@@ -2,7 +2,6 @@
 
 pub mod scanner_ffi;
 pub mod video_types;
-// pub mod video;  // Disabled: using C++ DLL via scanner_ffi instead
 
 #[tauri::command]
 fn greet(name: &str) -> String {
