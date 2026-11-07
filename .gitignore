@@ -20,6 +20,7 @@ scanner-cpp/build
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
+.mcp.json
 .idea
 .DS_Store
 *.suo
