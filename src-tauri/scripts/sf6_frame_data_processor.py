@@ -137,7 +137,9 @@ def extract_vitality(soup):
         return None
 
     for comment in soup.find_all(
-        string=lambda text: isinstance(text, str) and "SCRAPED_VITALITY" in text
+        string=lambda text: (
+            isinstance(text, str) and "SCRAPED_VITALITY" in text
+        )
     ):
         matches = re.findall(r"\d+", comment)
         if matches:
@@ -225,7 +227,9 @@ def fetch_character_html(char_id, html_dir, page, force=False):
     need_modern = force or not os.path.exists(modern_path)
 
     if not need_classic and not need_modern:
-        print(f"[FETCH] HTML files for '{char_id}' already exist. Skipping download.")
+        print(
+            f"[FETCH] HTML files for '{char_id}' already exist. Skipping download."
+        )
         return
 
     url = f"https://www.streetfighter.com/6/character/{char_id}/frame"
@@ -235,9 +239,9 @@ def fetch_character_html(char_id, html_dir, page, force=False):
     page.goto(url, wait_until="domcontentloaded", timeout=30000)
 
     try:
-        page.locator("#CybotCookiebotDialogBodyLevelButtonLevelOptinAllowAll").click(
-            timeout=2000
-        )
+        page.locator(
+            "#CybotCookiebotDialogBodyLevelButtonLevelOptinAllowAll"
+        ).click(timeout=2000)
         page.wait_for_timeout(500)
     except Exception:  # ruff: ignore[S110, BLE001]
         pass
@@ -257,7 +261,9 @@ def fetch_character_html(char_id, html_dir, page, force=False):
             page.locator(mode_btn_query).click(force=True)
         except Exception:  # ruff: ignore[BLE001]
             # Fallback direct JS click if selector wait fails
-            page.evaluate(f'document.querySelector("{mode_btn_query}")?.click()')
+            page.evaluate(
+                f'document.querySelector("{mode_btn_query}")?.click()'
+            )
 
         page.wait_for_timeout(1000)
 
@@ -282,7 +288,9 @@ def fetch_character_html(char_id, html_dir, page, force=False):
             table_html = page.content()
 
         if vitality_str:
-            table_html = f"<!-- SCRAPED_VITALITY: {vitality_str} -->\n" + table_html
+            table_html = (
+                f"<!-- SCRAPED_VITALITY: {vitality_str} -->\n" + table_html
+            )
 
         filename = os.path.join(html_dir, f"{char_id}_{mode}.txt")
         with open(filename, "w", encoding="utf-8") as f:
@@ -337,7 +345,9 @@ def parse_command_cell_html(td_element, mode):
         manual_imgs = span.find_all("img") if span else []
         manual_raw = convert_imgs_to_notation(manual_imgs)
         all_imgs = modern_p.find_all("img")
-        modern_imgs = [img for img in all_imgs if not (span and img in manual_imgs)]
+        modern_imgs = [
+            img for img in all_imgs if not (span and img in manual_imgs)
+        ]
         modern_raw = convert_imgs_to_notation(modern_imgs)
         return {
             "modern": map_raw_symbols_to_format(modern_raw),
@@ -371,7 +381,9 @@ def parse_local_html_mode(file_path, mode):
         cells = row.find_all(["th", "td"])
         if len(cells) >= 2:
             move_name_elem = cells[0].find(class_=re.compile(r"frame_arts"))
-            move_name = move_name_elem.get_text(strip=True) if move_name_elem else ""
+            move_name = (
+                move_name_elem.get_text(strip=True) if move_name_elem else ""
+            )
 
             if not move_name and len(cells) > 0:
                 move_name = cells[0].get_text(strip=True)
@@ -386,10 +398,12 @@ def parse_local_html_mode(file_path, mode):
                     if (i + 1) < len(cells):
                         cell_soup = cells[i + 1]
                         if key == "active":
-                            cell_values[key] = extract_active_frame_from_cell(cell_soup)
-                        elif key == "miscellaneous":
-                            cell_values[key] = extract_cell_text_with_newlines(
+                            cell_values[key] = extract_active_frame_from_cell(
                                 cell_soup
+                            )
+                        elif key == "miscellaneous":
+                            cell_values[key] = (
+                                extract_cell_text_with_newlines(cell_soup)
                             )
                         else:
                             cell_values[key] = cell_soup.get_text(strip=True)
@@ -406,7 +420,9 @@ def parse_local_html_mode(file_path, mode):
                 move_info["block"] = cell_values.get("block", "")
                 move_info["cancel"] = cell_values.get("cancel", "")
                 move_info["damage"] = cell_values.get("damage", "")
-                move_info["combo_scaling"] = cell_values.get("combo_scaling", "")
+                move_info["combo_scaling"] = cell_values.get(
+                    "combo_scaling", ""
+                )
 
                 move_info["drive_gauge"] = {
                     "hit": cell_values.get("drive_gauge_gain_hit", ""),
@@ -414,16 +430,22 @@ def parse_local_html_mode(file_path, mode):
                     "punish": cell_values.get("drive_gauge_lose_punish", ""),
                 }
 
-                move_info["sa_gauge_gain"] = cell_values.get("sa_gauge_gain", "")
+                move_info["sa_gauge_gain"] = cell_values.get(
+                    "sa_gauge_gain", ""
+                )
                 move_info["attribute"] = cell_values.get("attribute", "")
-                move_info["miscellaneous"] = cell_values.get("miscellaneous", "")
+                move_info["miscellaneous"] = cell_values.get(
+                    "miscellaneous", ""
+                )
 
             moves.append(move_info)
 
     return moves, vitality
 
 
-def process_character_json(char_id, char_name, html_dir, json_dir, force=False):
+def process_character_json(
+    char_id, char_name, html_dir, json_dir, force=False
+):
     json_path = os.path.join(json_dir, f"{char_id}.json")
     if not force and os.path.exists(json_path):
         print(
@@ -435,14 +457,22 @@ def process_character_json(char_id, char_name, html_dir, json_dir, force=False):
     modern_path = os.path.join(html_dir, f"{char_id}_modern.txt")
 
     if not os.path.exists(classic_path) or not os.path.exists(modern_path):
-        print(f"[WARN] HTML file(s) missing for '{char_id}'. Skipping JSON conversion.")
+        print(
+            f"[WARN] HTML file(s) missing for '{char_id}'. Skipping JSON conversion."
+        )
         return False
 
     print(f"[CONVERT] Processing local HTML files for '{char_id}'...")
-    classic_moves, classic_vitality = parse_local_html_mode(classic_path, "classic")
-    modern_moves, modern_vitality = parse_local_html_mode(modern_path, "modern")
+    classic_moves, classic_vitality = parse_local_html_mode(
+        classic_path, "classic"
+    )
+    modern_moves, modern_vitality = parse_local_html_mode(
+        modern_path, "modern"
+    )
 
-    vitality_str = classic_vitality if classic_vitality is not None else modern_vitality
+    vitality_str = (
+        classic_vitality if classic_vitality is not None else modern_vitality
+    )
 
     if classic_moves is None or modern_moves is None:
         print(f"[ERROR] Failed to parse HTML for '{char_id}'.")
@@ -475,7 +505,9 @@ def process_character_json(char_id, char_name, html_dir, json_dir, force=False):
     with open(json_path, "w", encoding="utf-8") as f:
         json.dump(character_json, f, ensure_ascii=False, indent=4)
 
-    print(f"[CONVERT] Successfully generated: {json_path} ({len(unified_moves)} moves)")
+    print(
+        f"[CONVERT] Successfully generated: {json_path} ({len(unified_moves)} moves)"
+    )
     return True
 
 
@@ -491,7 +523,10 @@ def main():
     )
 
     parser.add_argument(
-        "--fetch", action="store_true", default=False, help="Execute HTML fetching."
+        "--fetch",
+        action="store_true",
+        default=False,
+        help="Execute HTML fetching.",
     )
     parser.add_argument(
         "--force",
@@ -543,8 +578,12 @@ def main():
         target_characters = [{"id": target_id, "name": matched_name}]
 
     missing_html = any(
-        not os.path.exists(os.path.join(html_dir, f"{char['id']}_classic.txt"))
-        or not os.path.exists(os.path.join(html_dir, f"{char['id']}_modern.txt"))
+        not os.path.exists(
+            os.path.join(html_dir, f"{char['id']}_classic.txt")
+        )
+        or not os.path.exists(
+            os.path.join(html_dir, f"{char['id']}_modern.txt")
+        )
         for char in target_characters
     )
 
@@ -567,7 +606,9 @@ def main():
 
             for char in target_characters:
                 try:
-                    fetch_character_html(char["id"], html_dir, page, force=args.force)
+                    fetch_character_html(
+                        char["id"], html_dir, page, force=args.force
+                    )
                 except Exception as e:  # ruff: ignore[BLE001]
                     print(
                         f"[ERROR] Failed to fetch {char['id']}: {type(e).__name__} - {e}"
@@ -585,7 +626,11 @@ def main():
         for char in target_characters:
             try:
                 process_character_json(
-                    char["id"], char["name"], html_dir, json_dir, force=args.force
+                    char["id"],
+                    char["name"],
+                    html_dir,
+                    json_dir,
+                    force=args.force,
                 )
             except Exception as e:  # ruff: ignore[BLE001]
                 print(
@@ -593,7 +638,9 @@ def main():
                 )
         print("[CONVERT] Conversion phase complete.")
     else:
-        print("[CONVERT] --fetch specified without --force. Skipping JSON conversion.")
+        print(
+            "[CONVERT] --fetch specified without --force. Skipping JSON conversion."
+        )
 
 
 if __name__ == "__main__":
