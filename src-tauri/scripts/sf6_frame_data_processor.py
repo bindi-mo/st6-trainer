@@ -12,7 +12,7 @@ import re
 from bs4 import BeautifulSoup
 from playwright.sync_api import sync_playwright
 
-__version__ = "1.6.6"
+__version__ = "1.6.7"
 
 # Character IDs supported by default (All names in uppercase, vitality dynamically parsed)
 DEFAULT_CHARACTERS = [
@@ -79,12 +79,14 @@ IMG_MAPPING = {
     "key-ur.png": "9",
     "key-dl.png": "1",
     "key-dr.png": "3",
-    "key-neutral.png": "5",
+    "key-nutral.png": "5",
     "key-plus.png": "+",
     "key-all.png": "FULL",
+    "icon_punch.png": "P",
     "icon_punch_l.png": "LP",
     "icon_punch_m.png": "MP",
     "icon_punch_h.png": "HP",
+    "icon_kick.png": "K",
     "icon_kick_l.png": "LK",
     "icon_kick_m.png": "MK",
     "icon_kick_h.png": "HK",
@@ -93,9 +95,30 @@ IMG_MAPPING = {
     "modern_l.png": "L",
     "modern_m.png": "M",
     "modern_h.png": "H",
-    "modern_di.png": "DI",
-    "modern_parry.png": "DP",
+    "modern_dl.png": "DI",
+    "modern_dp.png": "DP",
 }
+
+
+class UnmappedImageError(Exception):
+    """Error when no string definition corresponding to the image is found."""
+
+    def __init__(self, src: str | None = None):
+        self.src = src
+
+        if src is None:
+            message = "The text corresponding to the image is not registered in the table."
+        elif src == "":
+            message = "The image source is an empty string, so mapping is not possible."
+        else:
+            message = (
+                f"The string corresponding to the image '{src}'"
+                " is not registered in the table."
+            )
+
+        self.msg = message
+
+        super().__init__(message)
 
 
 # ==============================================================================
@@ -280,6 +303,8 @@ def convert_imgs_to_notation(img_tags):
             if filename in src:
                 symbols.append(symbol)
                 break
+        else:
+            raise UnmappedImageError(src)
     return "".join(symbols)
 
 
