@@ -12,7 +12,7 @@ import re
 from bs4 import BeautifulSoup
 from playwright.sync_api import sync_playwright
 
-__version__ = "1.6.7"
+__version__ = "1.6.8"
 
 # Character IDs supported by default (All names in uppercase, vitality dynamically parsed)
 DEFAULT_CHARACTERS = [
@@ -218,8 +218,8 @@ def extract_active_frame_from_cell(cell_soup):
 
 
 def fetch_character_html(char_id, html_dir, page, force=False):
-    classic_path = os.path.join(html_dir, f"{char_id}_classic.part.html")
-    modern_path = os.path.join(html_dir, f"{char_id}_modern.part.html")
+    classic_path = os.path.join(html_dir, f"{char_id}_classic.txt")
+    modern_path = os.path.join(html_dir, f"{char_id}_modern.txt")
 
     need_classic = force or not os.path.exists(classic_path)
     need_modern = force or not os.path.exists(modern_path)
@@ -284,7 +284,7 @@ def fetch_character_html(char_id, html_dir, page, force=False):
         if vitality_str:
             table_html = f"<!-- SCRAPED_VITALITY: {vitality_str} -->\n" + table_html
 
-        filename = os.path.join(html_dir, f"{char_id}_{mode}.part.html")
+        filename = os.path.join(html_dir, f"{char_id}_{mode}.txt")
         with open(filename, "w", encoding="utf-8") as f:
             f.write(table_html)
         print(f"[FETCH] Saved table HTML: {filename}")
@@ -431,8 +431,8 @@ def process_character_json(char_id, char_name, html_dir, json_dir, force=False):
         )
         return True
 
-    classic_path = os.path.join(html_dir, f"{char_id}_classic.html")
-    modern_path = os.path.join(html_dir, f"{char_id}_modern.html")
+    classic_path = os.path.join(html_dir, f"{char_id}_classic.txt")
+    modern_path = os.path.join(html_dir, f"{char_id}_modern.txt")
 
     if not os.path.exists(classic_path) or not os.path.exists(modern_path):
         print(f"[WARN] HTML file(s) missing for '{char_id}'. Skipping JSON conversion.")
@@ -543,8 +543,8 @@ def main():
         target_characters = [{"id": target_id, "name": matched_name}]
 
     missing_html = any(
-        not os.path.exists(os.path.join(html_dir, f"{char['id']}_classic.part.html"))
-        or not os.path.exists(os.path.join(html_dir, f"{char['id']}_modern.part.html"))
+        not os.path.exists(os.path.join(html_dir, f"{char['id']}_classic.txt"))
+        or not os.path.exists(os.path.join(html_dir, f"{char['id']}_modern.txt"))
         for char in target_characters
     )
 
