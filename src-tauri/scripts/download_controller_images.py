@@ -8,7 +8,7 @@ It uses a key-to-symbol mapping dictionary, supports normalized output
 directory paths via pathlib, and includes options to overwrite existing files.
 """
 
-__version__ = "1.1.3"
+__version__ = "1.1.4"
 
 import argparse
 import os
@@ -23,6 +23,31 @@ from sf6_frame_data_processor import IMG_MAPPING
 
 ASSET_URL = "https://www.streetfighter.com/6/assets/"
 CONTROLER_PATH = "images/common/controller"
+
+BUTTONS = {
+    "8",
+    "2",
+    "4",
+    "6",
+    "7",
+    "9",
+    "1",
+    "3",
+    "5",
+    "LP",
+    "MP",
+    "HP",
+    "LK",
+    "MK",
+    "HK",
+    "A",
+    "SP",
+    "L",
+    "M",
+    "H",
+    "DI",
+    "DP",
+}
 
 
 def safe_urljoin(base, path):
@@ -65,6 +90,12 @@ def download_mapping_images(
     fail_count = 0
 
     for filename, symbol in img_mapping.items():
+        for button in BUTTONS:
+            if button == symbol:
+                break
+        else:
+            continue
+
         image_url = safe_urljoin(base_url, filename)
         save_path = output_dir / filename
 
