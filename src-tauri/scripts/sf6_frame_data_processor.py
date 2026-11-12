@@ -97,6 +97,14 @@ IMG_MAPPING = {
     "modern_h.png": "H",
     "modern_dl.png": "DI",
     "modern_dp.png": "DP",
+    "arrow_3.png": ">",
+    "key-or.png": "",
+    "key-uc.png": "",
+    "key-dc.png": "",
+    "key-lc.png": "",
+    "key-rc.png": "",
+    "icon_throw.png": "",
+    "key-circle.png": "",
 }
 
 
@@ -511,12 +519,7 @@ def process_character_json(
     return True
 
 
-# ==============================================================================
-# CLI Orchestrator & Entry Point
-# ==============================================================================
-
-
-def main():
+def parse_arg():
     parser = argparse.ArgumentParser(
         description=f"SF6 Frame Data Scraper & HTML-to-JSON Converter CLI Tool (v{__version__})",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
@@ -556,7 +559,16 @@ def main():
         help="Specific character ID or 'all'.",
     )
 
-    args = parser.parse_args()
+    return parser.parse_args()
+
+
+# ==============================================================================
+# CLI Orchestrator & Entry Point
+# ==============================================================================
+
+
+def main():
+    args = parse_arg()
 
     script_dir = os.path.dirname(os.path.abspath(__file__))
     html_dir = os.path.abspath(os.path.join(script_dir, args.html_dir))
@@ -632,11 +644,15 @@ def main():
                     json_dir,
                     force=args.force,
                 )
+            except UnmappedImageError as e:
+                print(f"[ERROR] {type(e).__name__} - {e}")
+                break
             except Exception as e:  # ruff: ignore[BLE001]
                 print(
                     f"[ERROR] Failed to convert {char['id']}: {type(e).__name__} - {e}"
                 )
-        print("[CONVERT] Conversion phase complete.")
+        else:
+            print("[CONVERT] Conversion phase complete.")
     else:
         print(
             "[CONVERT] --fetch specified without --force. Skipping JSON conversion."
