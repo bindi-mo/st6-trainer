@@ -105,6 +105,11 @@ IMG_MAPPING = {
     "key-rc.png": "",
     "icon_throw.png": "",
     "key-circle.png": "",
+    # Special icon textualization (per sf6_command_notation_spec.md section 3.5)
+    "icon_hold.png": "(H)",
+    "icon_jump.png": "(J)",
+    "icon_charge.png": "(C)",
+    "icon_derivative.png": "(D)",
 }
 
 
@@ -311,33 +316,174 @@ def fetch_character_html(char_id, html_dir, page, force=False):
 # ==============================================================================
 
 
+# Special icon symbols (per sf6_command_notation_spec.md section 3.5)
+SPECIAL_ICON_SYMBOLS = {"(H)", "(J)", "(C)", "(D)"}
+
+# Button priority order (per sf6_command_notation_spec.md section 3.3)
+# 1. Aided / System Button (A)
+# 2. Normal Attack Button (LP, MP, HP, LK, MK, HK, L, M, H, P, K)
+# 3. Extended / Special Button (SP, FULL)
+# 4. Dedicated Manual System (DI, DP)
+BUTTON_PRIORITY = {
+    "A": 0,
+    "LP": 1,
+    "MP": 2,
+    "HP": 3,
+    "LK": 4,
+    "MK": 5,
+    "HK": 6,
+    "L": 7,
+    "M": 8,
+    "H": 9,
+    "P": 10,
+    "K": 11,
+    "SP": 12,
+    "FULL": 13,
+    "DI": 14,
+    "DP": 15,
+}
+
+
 def convert_imgs_to_notation(img_tags):
+    """
+    Converts image tags to notation symbols.
+
+    Returns a tuple of (symbols_list, special_icons_list):
+      - symbols_list: list of individual symbols (directions, buttons, arrows, "+")
+      - special_icons_list: list of special icon suffixes (e.g. ["(H)", "(J)"])
+    """
     symbols = []
+    special_icons = []
     for img in img_tags:
         src = img.get("src", "")
         for filename, symbol in IMG_MAPPING.items():
             if filename in src:
-                symbols.append(symbol)
+                if symbol in SPECIAL_ICON_SYMBOLS:
+                    special_icons.append(symbol)
+                elif (
+                    symbol
+                ):  # Skip empty string mappings (e.g., key-or.png -> "")
+                    symbols.append(symbol)
                 break
         else:
             raise UnmappedImageError(src)
-    return "".join(symbols)
+    return symbols, special_icons
 
 
-def map_raw_symbols_to_format(raw_str):
-    if not raw_str:
+def _format_button_group(buttons):
+    """
+    Format a single simultaneous press group per spec rules.
+    Single button: no brackets (e.g., LP) except FULL which is [FULL].
+    Multiple buttons: brackets with + (e.g., [LP+LK], [A+SP])
+    Buttons sorted by BUTTON_PRIORITY.
+    """
+    if not buttons:
         return ""
-    formatted = raw_str.replace("+", "")
-    tokens = re.findall(r"([1-9]+)|([A-Z/]+)|(>)", formatted)
-    result = []
-    for num_part, btn_part, arrow_part in tokens:
-        if num_part:
-            result.append(num_part)
-        elif btn_part:
-            result.append(f"[{btn_part}]")
-        elif arrow_part:
-            result.append(">")
-    return "".join(result)
+    sorted_buttons = sorted(buttons, key=lambda b: BUTTON_PRIORITY.get(b, 99))
+    if len(sorted_buttons) == 1:
+        # FULL represents a simultaneous 2-attack press, so it gets brackets
+        if sorted_buttons[0] == "FULL":
+            return "[FULL]"
+        return sorted_buttons[0]
+    else:
+        return f"[{'+'.join(sorted_buttons)}]"
+
+
+def _format_segment(symbols):
+    """
+    Format a list of symbols (no ">" in this segment) into a command string.
+    Handles directions, buttons, and "+" separators for simultaneous presses.
+    The "+" symbol means buttons are pressed simultaneously (same group).
+    """
+    result_parts = []
+    current_direction = ""
+    current_buttons = []
+
+    def flush():
+        nonlocal current_direction, current_buttons
+        if current_buttons:
+            formatted = _format_button_group(current_buttons)
+            if current_direction:
+                result_parts.append(f"{current_direction}{formatted}")
+            else:
+                result_parts.append(formatted)
+            current_buttons = []
+        elif current_direction:
+            result_parts.append(current_direction)
+            current_direction = ""
+
+    for symbol in symbols:
+        if symbol == "+":
+            # "+" means simultaneous press - keep accumulating buttons in same group
+            continue
+        elif symbol in BUTTON_PRIORITY or symbol in {"P", "K", "FULL"}:
+            current_buttons.append(symbol)
+        elif re.match(r"^[1-9]$", symbol):
+            flush()
+            current_direction = symbol
+        else:
+            # Unknown symbol: treat as button
+            current_buttons.append(symbol)
+
+    flush()
+    return "".join(result_parts)
+
+
+def map_raw_symbols_to_format(symbols, special_icons=None):
+    """
+    Formats raw notation symbols into spec-compliant command string.
+
+    Rules (per sf6_command_notation_spec.md):
+      - Single button: no brackets (e.g., 236LP, 6SP, 5DI)
+      - Simultaneous presses: brackets with + inside (e.g., 5[A+SP], 5[LP+LK], 236[FULL])
+      - Directional numbers directly to the left of button/bracket block
+      - Button priority within brackets: A > Normal > SP/FULL > DI/DP
+      - Time-series ">" preserved between segments
+      - Special icons appended after command (e.g., (H), (J), (D))
+      - Charge (C) placed directly after the directional number (e.g., 4(C)>6LP)
+    """
+    if not symbols and not special_icons:
+        return ""
+
+    special_icons = special_icons or []
+
+    # Separate (C) charge icon from other special icons
+    charge_icon = "(C)" if "(C)" in special_icons else None
+    other_specials = [s for s in special_icons if s != "(C)"]
+
+    # Split by ">" for time-series segments
+    segments = []
+    current_segment = []
+    for s in symbols:
+        if s == ">":
+            segments.append(current_segment)
+            segments.append(">")  # marker
+            current_segment = []
+        else:
+            current_segment.append(s)
+    if current_segment:
+        segments.append(current_segment)
+
+    formatted_parts = []
+    charge_applied = False
+    for segment in segments:
+        if segment == ">":
+            formatted_parts.append(">")
+        else:
+            part = _format_segment(segment)
+            # Insert (C) right after the first direction number in this segment
+            if charge_icon and not charge_applied and part:
+                # Find the first digit in the part and insert (C) after it
+                match = re.match(r"^([1-9]+)(.*)$", part)
+                if match:
+                    part = f"{match.group(1)}{charge_icon}{match.group(2)}"
+                    charge_applied = True
+            formatted_parts.append(part)
+
+    result = "".join(formatted_parts)
+    # Append other special icons at the end
+    result += "".join(other_specials)
+    return result
 
 
 def parse_command_cell_html(td_element, mode):
@@ -345,7 +491,8 @@ def parse_command_cell_html(td_element, mode):
         classic_p = td_element.find("p", class_=re.compile(r"frame_classic"))
         target_container = classic_p if classic_p else td_element
         imgs = target_container.find_all("img")
-        return map_raw_symbols_to_format(convert_imgs_to_notation(imgs))
+        symbols, special_icons = convert_imgs_to_notation(imgs)
+        return map_raw_symbols_to_format(symbols, special_icons)
 
     elif mode == "modern":
         modern_p = td_element.find("p", class_=re.compile(r"frame_modern"))
@@ -353,15 +500,17 @@ def parse_command_cell_html(td_element, mode):
             return {"modern": "", "modern_manual": ""}
         span = modern_p.find("span")
         manual_imgs = span.find_all("img") if span else []
-        manual_raw = convert_imgs_to_notation(manual_imgs)
+        manual_symbols, manual_special = convert_imgs_to_notation(manual_imgs)
+        manual_raw = map_raw_symbols_to_format(manual_symbols, manual_special)
         all_imgs = modern_p.find_all("img")
         modern_imgs = [
             img for img in all_imgs if not (span and img in manual_imgs)
         ]
-        modern_raw = convert_imgs_to_notation(modern_imgs)
+        modern_symbols, modern_special = convert_imgs_to_notation(modern_imgs)
+        modern_raw = map_raw_symbols_to_format(modern_symbols, modern_special)
         return {
-            "modern": map_raw_symbols_to_format(modern_raw),
-            "modern_manual": map_raw_symbols_to_format(manual_raw),
+            "modern": modern_raw,
+            "modern_manual": manual_raw,
         }
 
 
