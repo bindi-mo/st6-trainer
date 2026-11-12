@@ -99,17 +99,18 @@ IMG_MAPPING = {
     "modern_dp.png": "DP",
     "arrow_3.png": ">",
     "key-or.png": "",
-    "key-uc.png": "",
-    "key-dc.png": "",
-    "key-lc.png": "",
-    "key-rc.png": "",
+    # Charge (hold direction) images - mapped to (CHG) per spec section 3.5
+    "key-uc.png": "(CHG)",
+    "key-dc.png": "(CHG)",
+    "key-lc.png": "(CHG)",
+    "key-rc.png": "(CHG)",
     "icon_throw.png": "",
     "key-circle.png": "",
     # Special icon textualization (per sf6_command_notation_spec.md section 3.5)
-    "icon_hold.png": "(H)",
-    "icon_jump.png": "(J)",
-    "icon_charge.png": "(C)",
-    "icon_derivative.png": "(D)",
+    "icon_hold.png": "(HLD)",
+    "icon_jump.png": "(JMP)",
+    "icon_charge.png": "(CHG)",
+    "icon_derivative.png": "(DER)",
 }
 
 
@@ -317,7 +318,7 @@ def fetch_character_html(char_id, html_dir, page, force=False):
 
 
 # Special icon symbols (per sf6_command_notation_spec.md section 3.5)
-SPECIAL_ICON_SYMBOLS = {"(H)", "(J)", "(C)", "(D)"}
+SPECIAL_ICON_SYMBOLS = {"(HLD)", "(JMP)", "(CHG)", "(DER)"}
 
 # Button priority order (per sf6_command_notation_spec.md section 3.3)
 # 1. Aided / System Button (A)
@@ -439,17 +440,17 @@ def map_raw_symbols_to_format(symbols, special_icons=None):
       - Directional numbers directly to the left of button/bracket block
       - Button priority within brackets: A > Normal > SP/FULL > DI/DP
       - Time-series ">" preserved between segments
-      - Special icons appended after command (e.g., (H), (J), (D))
-      - Charge (C) placed directly after the directional number (e.g., 4(C)>6LP)
+      - Special icons appended after command (e.g., (HLD), (JMP), (DER))
+      - Charge (CHG) placed directly after the directional number (e.g., 4(CHG)>6LP)
     """
     if not symbols and not special_icons:
         return ""
 
     special_icons = special_icons or []
 
-    # Separate (C) charge icon from other special icons
-    charge_icon = "(C)" if "(C)" in special_icons else None
-    other_specials = [s for s in special_icons if s != "(C)"]
+    # Count charge icons (may be multiple for multi-direction charge moves)
+    charge_count = special_icons.count("(CHG)")
+    other_specials = [s for s in special_icons if s != "(CHG)"]
 
     # Split by ">" for time-series segments
     segments = []
@@ -465,19 +466,18 @@ def map_raw_symbols_to_format(symbols, special_icons=None):
         segments.append(current_segment)
 
     formatted_parts = []
-    charge_applied = False
+    charge_remaining = charge_count
     for segment in segments:
         if segment == ">":
             formatted_parts.append(">")
         else:
             part = _format_segment(segment)
-            # Insert (C) right after the first direction number in this segment
-            if charge_icon and not charge_applied and part:
-                # Find the first digit in the part and insert (C) after it
+            # Insert (CHG) right after the first direction number in this segment
+            if charge_remaining > 0 and part:
                 match = re.match(r"^([1-9]+)(.*)$", part)
                 if match:
-                    part = f"{match.group(1)}{charge_icon}{match.group(2)}"
-                    charge_applied = True
+                    part = f"{match.group(1)}(CHG){match.group(2)}"
+                    charge_remaining -= 1
             formatted_parts.append(part)
 
     result = "".join(formatted_parts)
