@@ -12,7 +12,7 @@ import re
 from bs4 import BeautifulSoup
 from playwright.sync_api import sync_playwright
 
-__version__ = "1.6.8"
+__version__ = "1.7.2"
 
 # Character IDs supported by default (All names in uppercase, vitality dynamically parsed)
 DEFAULT_CHARACTERS = [
@@ -99,18 +99,14 @@ IMG_MAPPING = {
     "modern_dp.png": "DP",
     "arrow_3.png": ">",
     "key-or.png": "",
-    # Charge (hold direction) images - mapped to (CHG) per spec section 3.5
-    "key-uc.png": "(CHG)",
-    "key-dc.png": "(CHG)",
-    "key-lc.png": "(CHG)",
-    "key-rc.png": "(CHG)",
+    # Charge (hold direction) images - mapped to direction + (CHG) per spec section 3.5
+    # These produce both a direction number and the (CHG) special icon
+    "key-uc.png": ("8", "(CHG)"),
+    "key-dc.png": ("2", "(CHG)"),
+    "key-lc.png": ("4", "(CHG)"),
+    "key-rc.png": ("6", "(CHG)"),
     "icon_throw.png": "",
     "key-circle.png": "",
-    # Special icon textualization (per sf6_command_notation_spec.md section 3.5)
-    "icon_hold.png": "(HLD)",
-    "icon_jump.png": "(JMP)",
-    "icon_charge.png": "(CHG)",
-    "icon_derivative.png": "(DER)",
 }
 
 
@@ -318,7 +314,7 @@ def fetch_character_html(char_id, html_dir, page, force=False):
 
 
 # Special icon symbols (per sf6_command_notation_spec.md section 3.5)
-SPECIAL_ICON_SYMBOLS = {"(HLD)", "(JMP)", "(CHG)", "(DER)"}
+SPECIAL_ICON_SYMBOLS = {"(CHG)"}
 
 # Button priority order (per sf6_command_notation_spec.md section 3.3)
 # 1. Aided / System Button (A)
@@ -351,20 +347,41 @@ def convert_imgs_to_notation(img_tags):
 
     Returns a tuple of (symbols_list, special_icons_list):
       - symbols_list: list of individual symbols (directions, buttons, arrows, "+")
-      - special_icons_list: list of special icon suffixes (e.g. ["(H)", "(J)"])
+      - special_icons_list: list of special icon suffixes (e.g. ["(CHG)"])
     """
     symbols = []
     special_icons = []
+    prev_was_direction = False
     for img in img_tags:
         src = img.get("src", "")
         for filename, symbol in IMG_MAPPING.items():
             if filename in src:
-                if symbol in SPECIAL_ICON_SYMBOLS:
+                if isinstance(symbol, tuple):
+                    # Charge direction images produce both direction + (CHG)
+                    direction, charge_icon = symbol
+                    # Insert ">" if previous symbol was a different direction
+                    if (
+                        prev_was_direction
+                        and symbols
+                        and symbols[-1] != direction
+                    ):
+                        symbols.append(">")
+                    symbols.append(direction)
+                    special_icons.append(charge_icon)
+                    prev_was_direction = True
+                elif symbol in SPECIAL_ICON_SYMBOLS:
                     special_icons.append(symbol)
                 elif (
                     symbol
                 ):  # Skip empty string mappings (e.g., key-or.png -> "")
-                    symbols.append(symbol)
+                    if re.match(r"^[1-9]$", symbol):
+                        # Directions are concatenated directly (e.g., 236, not 2>3>6).
+                        # The ">" symbol is reserved for time-series sequences per spec section 3.4.
+                        symbols.append(symbol)
+                        prev_was_direction = True
+                    else:
+                        symbols.append(symbol)
+                        prev_was_direction = False
                 break
         else:
             raise UnmappedImageError(src)
@@ -440,7 +457,6 @@ def map_raw_symbols_to_format(symbols, special_icons=None):
       - Directional numbers directly to the left of button/bracket block
       - Button priority within brackets: A > Normal > SP/FULL > DI/DP
       - Time-series ">" preserved between segments
-      - Special icons appended after command (e.g., (HLD), (JMP), (DER))
       - Charge (CHG) placed directly after the directional number (e.g., 4(CHG)>6LP)
     """
     if not symbols and not special_icons:
@@ -528,6 +544,13 @@ def parse_local_html_mode(file_path, mode):
     target_rows = []
     if tables:
         for table in tables:
+            # Skip the first tr in thead and tbody (header rows); only subsequent tr are commands
+            for section in ("thead", "tbody"):
+                section_elem = table.find(section)
+                if section_elem:
+                    first_tr = section_elem.find("tr")
+                    if first_tr:
+                        first_tr.decompose()
             target_rows.extend(table.find_all("tr"))
     else:
         target_rows = soup.find_all("tr")
@@ -565,7 +588,10 @@ def parse_local_html_mode(file_path, mode):
                                 extract_cell_text_with_newlines(cell_soup)
                             )
                         else:
-                            cell_values[key] = cell_soup.get_text(strip=True)
+                            value = cell_soup.get_text(strip=True)
+                            if key in ("hit", "block"):
+                                value = value.replace("～", "..")
+                            cell_values[key] = value
                     else:
                         cell_values[key] = ""
 
