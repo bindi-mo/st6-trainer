@@ -486,13 +486,19 @@ def process_character_json(
         print(f"[ERROR] Failed to parse HTML for '{char_id}'.")
         return False
 
+    # Build a lookup from modern moves keyed by move_name
+    modern_lookup = {}
+    for m_move in modern_moves:
+        modern_lookup[m_move["move_name"]] = m_move["command"]
+
     unified_moves = []
-    for idx, c_move in enumerate(classic_moves):
+    for c_move in classic_moves:
         c_cmd = c_move["command"]
         m_cmd = ""
         m_manual_cmd = ""
-        if idx < len(modern_moves):
-            m_data = modern_moves[idx]["command"]
+
+        m_data = modern_lookup.get(c_move["move_name"])
+        if m_data:
             m_cmd = m_data.get("modern", "")
             m_manual_cmd = m_data.get("modern_manual", "")
 
