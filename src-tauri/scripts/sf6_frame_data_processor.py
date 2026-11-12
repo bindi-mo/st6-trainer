@@ -328,13 +328,15 @@ def map_raw_symbols_to_format(raw_str):
     if not raw_str:
         return ""
     formatted = raw_str.replace("+", "")
-    tokens = re.findall(r"([1-9]+)|([A-Z/]+)", formatted)
+    tokens = re.findall(r"([1-9]+)|([A-Z/]+)|(>)", formatted)
     result = []
-    for num_part, btn_part in tokens:
+    for num_part, btn_part, arrow_part in tokens:
         if num_part:
             result.append(num_part)
         elif btn_part:
             result.append(f"[{btn_part}]")
+        elif arrow_part:
+            result.append(">")
     return "".join(result)
 
 
