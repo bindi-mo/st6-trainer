@@ -1,0 +1,56 @@
+{
+    "coordinate_space": "canonical",
+    "canonical_raster": [
+        1920,
+        1080
+    ],
+    "fps": 60.0,
+    "rows_visible": 19,
+    "fm_latch_frames": 3,
+    "gauge_occluded_threshold": 10,
+    "calibration": {
+        "upper_band_y": [
+            0.00,
+            0.25
+        ],
+        "lower_band_y": [
+            0.70,
+            1.00
+        ],
+        "search_x_tolerance_px": 32,
+        "confidence_threshold": 0.90,
+        "prominence_threshold": 0.10,
+        "max_dx_px": 2,
+        "consensus_survival_min": 0.80,
+        "consensus_vote_window_px": 2
+    },
+    "template_thresholds": {
+        "display": 0.85,
+        "calibration": 0.90,
+        "frame_meter": 0.90,
+        "input_glyph": 0.92,
+        "attack_property": 0.92
+    },
+    "input": {
+        "row_slots_p1": [
+            "counter",
+            "direction",
+            "buttons"
+        ],
+        "row_slots_p2": [
+            "buttons",
+            "direction",
+            "counter"
+        ],
+        "output_order": [
+            "directions",
+            "buttons"
+        ]
+    },
+    "attack_property_locale": [
+        "en",
+        "ja"
+    ],
+    "template_pack_version": "sf6-ui-2026.11",
+    "config_version": "cfg-1.0"
+}

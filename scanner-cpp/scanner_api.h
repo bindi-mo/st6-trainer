@@ -1,4 +1,5 @@
-#pragma once
+#ifndef SCANNER_API_H
+#define SCANNER_API_H
 
 #include <cstdint>
 
@@ -17,81 +18,135 @@ extern "C"
 {
 #endif
 
-    // Opaque handle type
-    typedef struct ScannerImpl ScannerImpl;
-    typedef ScannerImpl *ScannerHandle;
+    // ===== Version =====
+    typedef struct
+    {
+        int major, minor, patch;
+    } ScannerVersion;
+    SCANNER_API ScannerVersion scanner_api_version();
 
-#ifdef __cplusplus
-}
-#endif
-
-// Frame data structure matching Rust side (defined outside extern "C" for C++ visibility)
-typedef struct
-{
-    int frame_index;
-    double timestamp_ms;
-
-    // Player 1 inputs (packed: direction in lower 4 bits, buttons in upper bits)
-    uint8_t p1_inputs[64];
-    int p1_input_count;
-
-    // Player 2 inputs
-    uint8_t p2_inputs[64];
-    int p2_input_count;
-
-    // Drive gauge (0-6 blocks, burnout flag)
-    uint8_t p1_drive_blocks;
-    uint8_t p1_drive_burnout;
-    uint8_t p2_drive_blocks;
-    uint8_t p2_drive_burnout;
-
-    // System notification
-    uint8_t has_notification;
-    uint8_t notification_type; // 0=Counter, 1=PunishCounter, 2=Reversal, 3=FirstAttack, 4=WhiffPunish, 5=CrushCounter
-    float notification_confidence;
-
-    // Frame meter data
-    uint8_t has_frame_meter;
-    int startup;
-    int active;
-    int recovery;
-    int hit_advantage;
-    int block_advantage;
-} FrameData;
-
-// Scanner configuration
-typedef struct
-{
-    int frame_stride;          // Process every Nth frame (1 = all)
-    int hud_redetect_interval; // Re-detect HUD every N frames
-    int max_frames;            // Max frames to process (0 = all)
-} ScanConfig;
-
-#ifdef __cplusplus
-extern "C"
-{
-#endif
-
-    // Create scanner from video file
-    // Returns NULL on failure
-    SCANNER_API ScannerHandle scanner_create(const char *video_path, const ScanConfig *config);
-
-    // Get next frame data
-    // Returns 1 if frame available, 0 if end of video, -1 on error
-    SCANNER_API int scanner_next_frame(ScannerHandle handle, FrameData *out_frame);
-
-    // Get video metadata
-    SCANNER_API int scanner_get_total_frames(ScannerHandle handle);
-    SCANNER_API double scanner_get_fps(ScannerHandle handle);
-    SCANNER_API int scanner_get_width(ScannerHandle handle);
-    SCANNER_API int scanner_get_height(ScannerHandle handle);
-
-    // Destroy scanner and free resources
-    SCANNER_API void scanner_destroy(ScannerHandle handle);
-
-    // Get last error message (call after failed operation)
+    // ===== エラー =====
     SCANNER_API const char *scanner_get_last_error();
 
+    // ===== 設定 =====
+    typedef enum
+    {
+        CALIB_FAIL = 0,
+        CALIB_ASK = 1
+    } CalibFailureMode;
+
+    typedef struct
+    {
+        const char *template_pack_path; // UTF-8, 呼び出し側所有
+        const char *config_json;        // JSON 文字列（スキャナー設定）、呼び出し側所有
+        CalibFailureMode on_calib_failure;
+        int frame_stride;
+        int hud_redetect_interval;
+        int max_frames; // 0 = 全フレーム
+    } ScanConfig;
+
+    // ===== 不透明ハンドル =====
+    typedef struct ScannerImpl *ScannerHandle;
+
+    // ===== 出力構造体（POD、固定長配列） =====
+
+    // MatchMetadata（1 回のみ）
+    typedef struct
+    {
+        char match_id[64];
+        char character_name_p1[32];
+        char character_name_p2[32];
+        char control_type_p1[16]; // "classic" / "modern" / ""
+        char control_type_p2[16];
+        int detected_at_frame;
+        char source_resolution[32];
+        double source_fps;
+        int canonical_raster[2];
+        int top_y_offset_px;
+        int bottom_y_offset_px;
+        int offset_snapped;  // 常に 0
+        int manual_verified; // -1=null, 0=false, 1=true
+        int input_history_available;
+        char attack_property_locale[32]; // "en,ja" 等
+        char extracted_at_utc[32];
+        char config_version[32];
+        char template_pack_version[32];
+        char extractor_version[32];
+    } MatchMetadata;
+
+    // FrameTelemetry (60Hz each)
+    typedef struct
+    {
+        int frame_index;
+        int source_frame_index;
+        int64_t timestamp_ms;
+        int round_index;
+        int hp_reset;
+        double hp_p1, drive_p1, sa_p1;
+        int in_burnout_p1;
+        double hp_p2, drive_p2, sa_p2;
+        int in_burnout_p2;
+        char quality_flags[16][32];
+        int quality_flags_count;
+    } FrameTelemetry;
+
+    // InputEvent（セグメント毎）
+    typedef struct
+    {
+        int frame_start, frame_end;
+        int frame_span_video;
+        int hold_frames;
+        int counter_clipped;
+        int hold_frames_lower_bound;
+        int time_dilation_suspected;
+        int resync_used;
+        int unknown_glyph;
+        int is_preround;
+        char player[4];
+        int round_index;
+        int event_index;
+        char directions[8][8];
+        int directions_count;
+        char buttons[7][8];
+        int buttons_count;
+        char quality_flags[16][32];
+        int quality_flags_count;
+    } InputEvent;
+
+    // MoveEvent（ラッチ済みブロック毎）
+    typedef struct
+    {
+        int frame_start, frame_end;
+        int round_index;
+        int fm_startup_p1, fm_total_p1, fm_advantage_p1;
+        int fm_startup_p2, fm_total_p2, fm_advantage_p2;
+        int damage_p1, combo_damage_p1;
+        int damage_p2, combo_damage_p2;
+        char attack_property_p1[16];
+        char attack_property_p2[16];
+        char attack_property_locale[16];
+        double conf;
+        char quality_flags[16][32];
+        int quality_flags_count;
+    } MoveEvent;
+
+    // ===== メイン API =====
+
+    // video_path: UTF-8 ファイルパス。config: NULL 可（デフォルト値使用）
+    SCANNER_API ScannerHandle scanner_create(const char *video_path, const ScanConfig *config);
+
+    // キャリブレーション完了後、最初の telemetry 取得前に呼ぶ
+    SCANNER_API int scanner_get_metadata(ScannerHandle h, MatchMetadata *out);
+
+    // イテレータ: 1=成功, 0=終了, -1=エラー（scanner_get_last_error で詳細）
+    SCANNER_API int scanner_next_telemetry(ScannerHandle h, FrameTelemetry *out);
+    SCANNER_API int scanner_next_input_event(ScannerHandle h, InputEvent *out); // player は構造体内
+    SCANNER_API int scanner_next_move_event(ScannerHandle h, MoveEvent *out);
+
+    SCANNER_API void scanner_destroy(ScannerHandle h);
+
 #ifdef __cplusplus
 }
 #endif
+
+#endif // SCANNER_API_H

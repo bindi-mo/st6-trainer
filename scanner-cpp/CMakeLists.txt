@@ -71,12 +71,12 @@ set_target_properties(st6_scanner PROPERTIES
     SOVERSION ${PROJECT_VERSION_MAJOR}
 )
 
-# Windows: Automatically copy to the Tauri resources directory
+# Windows: Automatically copy to the Tauri resources directory (bundled with app)
 if(WIN32)
     add_custom_command(TARGET st6_scanner POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
         $<TARGET_FILE:st6_scanner>
         "${CMAKE_CURRENT_SOURCE_DIR}/../src-tauri/st6_scanner.dll"
-        COMMENT "Copying scanner DLL to src-tauri directory for Tauri bundler"
+        COMMENT "Copying scanner DLL to src-tauri for Tauri bundler"
     )
 endif()
