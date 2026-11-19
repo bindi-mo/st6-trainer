@@ -42,7 +42,7 @@
 |-------|------|----------|--------|------|------|
 | **0** | 環境・インターフェース固定 | `scanner_api.h` 拡張、CMake/Cargo 連携確認、設定分離実装 | 安定した FFI 境界、`scanner_config.json`, `app_config.json` | — | **完了** |
 | **1** | テンプレート・設定準備 | アンカー/グリフ/数字/攻撃属性/操作系テンプレートの充足と棚卸し | `src-tauri/templates/`, `src-tauri/config/` | Phase 0 | **完了** |
-| **2** | ラスタ正規化・キャリブレーション | `scanner.cpp`: 正規化(§6.1)、アンカーY探索・コンセンサス(§2)、fail-closed | `st6_scanner.dll` (v1) | Phase 0, 1 | 未着手 |
+| **2** | ラスタ正規化・キャリブレーション | `scanner.cpp`: 正規化(§6.1)、アンカーY探索・コンセンサス(§2)、fail-closed | `st6_scanner.dll` (v1) | Phase 0, 1 | **完了**（簡易方式・§2.5 参照） |
 | **3** | 入力履歴追跡 | 19行スロット・slot0読み・シグネチャ/カウンター状態マシン(§4) | `input_events` 出力対応 | Phase 2 | 未着手 |
 | **4** | ゲージ・フレームメーター | HSVゲージ(§3.2, §5)、2ROIグループ・3フレームラッチ・攻撃属性(§3.3) | `frame_telemetry`, `move_events` | Phase 2 | 未着手 |
 | **5** | Rust FFI・出力パイプライン | `scanner_ffi.rs` 拡充、中間JSONL→SQLite 変換、インバリアントチェック | `sf6-extract` CLI / Tauri コマンド | Phase 2–4 | 30% |
@@ -85,11 +85,76 @@ scanner_create → scanner_get_metadata → scanner_next_telemetry → scanner_d
 
 `src-tauri/videos/replay_00.mkv` をフィクスチャとして使用。動画が無い環境では `[3] SKIP` として degrade し、CI でも落ちない。
 
+## 2A. Phase 2 — **完了**（簡易キャリブレーション方式）
+
+Phase 2 は「ラスタ正規化」と「キャリブレーション」を実装した。ただし、アンカーテンプレートマッチング（§2.3–§2.5 の本来方式）は実データで信頼度が閾値（0.90）に届かなかったため、**Phase 2 では簡易方式（HUD 存在検出＋色ベース）を採用**し、正確な Y オフセット確定は Phase 3–4 の実ゲージ検出時に持ち越す方針とした。
+
+### 2A.1 ラスタ正規化（§6.1） — **完了**
+
+`scanner-cpp/raster_normalizer.{h,cpp}` を新規作成。
+
+- 入力フレームを **canonical raster 1920x1080** に正規化
+- レターボックス/ピラーボックス除去（`detect_content_region`）
+  - 現状は「全フレームをコンテンツ領域として扱う」簡易実装（実データは 1920x1080 全面）
+- アスペクト比ゲート: 16:9 から **0.010 超**で `E_ASPECT_UNSUPPORTED`
+- 等方性ゲート: スケール差 **0.005 超**で `E_ANISOTROPIC_SCALE`
+- 黒フレーム検出: `max_val < 10` で `E_BLACK_FRAME`（呼び出し側でスキップ）
+
+### 2A.2 キャリブレーション — **完了（簡易方式）**
+
+`scanner.cpp::perform_calibration()` に実装。
+
+- **キャリブレーション用フレームの選定**
+  - 動画先頭は「リプレイデータ読み込み」「対戦相手演出」で黒画面が続く
+  - **対戦開始以降**のフレームを走査し、上部 HUD（Y=0–270）と下部 HUD（Y=756–1080）の両方にコンテンツ（`max_val > 100`）がある最初のフレームを採用
+- **HUD 存在検出（HSV 色マスク）**
+  - 上部 25% 領域の緑（HP ゲージ）: `H∈[40,180], S,V∈[50,255]`
+  - 下部 30% 領域の青（SA ゲージ）: `H∈[100,130], S,V∈[50,255]`
+  - 両方の平均が 0.01 未満なら `E_HUD_ABSENT`
+- **Y オフセット**
+  - 現状は `top_y_offset_px = 0`, `bottom_y_offset_px = 0`（既定値）
+  - 信頼度は暫定 0.8。Phase 3–4 の実ゲージ検出で精緻化する
+
+### 2A.3 アンカーテンプレートマッチング（本来方式・保留）
+
+`scanner-cpp/calibration.{h,cpp}` を実装済みだが、Phase 2 では**未使用（将来の拡張用に保持）**。
+
+- アンカー: upper 5 種（timer top edge / P1・P2 HP corner / P1・P2 drive corner）、lower 3 種（P1・P2 SA bracket / frame meter top edge）
+- `TM_CCOEFF_NORMED` による 2D マッチング、prominence ゲート、median コンセンサス（§2.5 準拠）
+- **実データでの結果**: 最大信頼度 0.18–0.44 にとどまり、閾値 0.90 に未達
+  - 原因: テンプレートと実フレームの HUD 描画が一致しない（テンプレート品質/切り出し位置の問題）
+  - 対応: Phase 1 のテンプレート再生成、または Phase 3–4 の実検出で代替
+
+### 2A.4 黒フレームのスキップ — **完了**
+
+`scanner_next_telemetry()` に実装。
+
+- 各フレームの `max_val < 10` を黒と判定し、テレメトリを出力せず次フレームへ進む
+- これにより冒頭の黒画面区間で `E_BLACK_FRAME` エラーにならず、全フレームを走査可能
+
+### 2A.5 ビルド・検証 — **完了**
+
+- `CMakeLists.txt` に `calibration.cpp` / `raster_normalizer.cpp` を追加
+- `scanner_api_version()` を **0.2.0** に更新
+- 例外境界: `scanner_create` / `scanner_get_metadata` / `scanner_next_telemetry` を `try/catch` で保護し、C++ 例外が FFI 境界を越えないようにした
+- **スモークテスト結果**: `SMOKE TEST PASSED`（フレーム走査、`match_id=match-0-0`）
+
+### 2A.6 既知の制約・Phase 3–4 への申し送り
+
+| 項目 | 現状 | 申し送り |
+|------|------|----------|
+| Y オフセット | 0 固定（暫定） | Phase 3–4 で実ゲージ位置から確定 |
+| アンカーマッチング | 信頼度不足で未使用 | テンプレート再生成 or 実検出で代替 |
+| ラウンド検出 | 未実装 | Phase 3–4 で HP リセット/タイマーから検出（§4.5, §7.2） |
+| レターボックス除去 | 全面＝コンテンツ扱い | 非 16:9 入力対応時に実装 |
+| キャラ名・操作系 | 空文字（スタブ） | Phase 3 で実装 |
+
 ## 3. リスクと対策（リポジトリ固有）
 
 | リスク | 影響 | 対策 | 現状 |
 |--------|------|------|------|
 | テンプレートの網羅性不足 | Phase 2–4 の精度低下 | Phase 1 で棚卸し・不足分を収集 | `anchor` / `dir` / `num` / `names` / `btn_classic` / `btn_modern` / `attack_property/EN` は存在。**`attack_property` は現状 EN のみ**（他ロケールは今後の予定） |
+| **アンカーテンプレートが実フレームと不一致** | キャリブレーション失敗（信頼度 0.18–0.44） | Phase 2 は簡易方式（HUD 色検出）で回避。テンプレート再生成を Phase 3–4 で検討 | **顕在化**（Phase 2 で判明） |
 | C++ / Rust 境界で ABI 不整合 | クラッシュ・メモリリーク | `scanner_api.h` を **C 互換 POD のみ**に制限。`std::string` 等禁止。所有権は呼び出し側 | 準拠済み |
 | OpenCV 版違い (4.12.0 固定) | ビルド失敗・挙動差 | `scanner-cpp/opencv-build/` を**ベンダリング継続**。CMake で `find_package` せずローカル参照 | 準拠済み |
 | 検証動画の不足 | 受け入れテスト不可 | `src-tauri/videos/replay_00.mkv` を継続利用。不足時は合成動画で補完 | **解消済み**（1 本所有） |
@@ -103,11 +168,12 @@ st6-trainer/
 ├── scanner-cpp/
 │   ├── CMakeLists.txt
 │   ├── scanner_api.h            # 仕様書§7準拠（4構造体 + イテレータAPI）
-│   ├── scanner.cpp              # ← 全面書き換え（現状スタブ）
-│   ├── calibration.cpp/h        # 新規
-│   ├── input_tracker.cpp/h      # 新規
-│   ├── gauge.cpp/h              # 新規
-│   └── frame_meter.cpp/h        # 新規
+│   ├── scanner.cpp              # Phase 2 で全面書き換え（正規化・簡易キャリブレーション）
+│   ├── raster_normalizer.cpp/h  # Phase 2 で新規（§6.1 ラスタ正規化）
+│   ├── calibration.cpp/h        # Phase 2 で新規（アンカーマッチング・将来拡張用）
+│   ├── input_tracker.cpp/h      # 新規（Phase 3）
+│   ├── gauge.cpp/h              # 新規（Phase 4）
+│   └── frame_meter.cpp/h        # 新規（Phase 4）
 ├── src-tauri/
 │   ├── config/
 │   │   ├── scanner_config.json  # スキャナー専用（現状維持）
