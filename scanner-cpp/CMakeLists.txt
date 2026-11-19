@@ -19,7 +19,11 @@ endif()
 set(OpenCV_INSTALL_DIR "${CMAKE_CURRENT_SOURCE_DIR}/opencv-build/install")
 
 # Creating a DLL
-add_library(st6_scanner SHARED scanner.cpp)
+add_library(st6_scanner SHARED
+    scanner.cpp
+    calibration.cpp
+    raster_normalizer.cpp
+)
 
 # Configuring Include Directories
 target_include_directories(st6_scanner PRIVATE
