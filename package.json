@@ -4,13 +4,13 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "bun x --bun vite",
-    "build": "tsc && bun x --bun vite build",
-    "preview": "bun x --bun vite preview",
+    "dev": "bunx --bun vite",
+    "build": "tsc && bunx --bun vite build",
+    "preview": "bunx --bun vite preview",
     "tauri": "tauri",
-    "test": "bun x --bun vitest",
-    "test:ui": "bun x --bun vitest --ui",
-    "test:run": "bun x --bun vitest run"
+    "test": "bunx --bun vitest",
+    "test:ui": "bunx --bun vitest --ui",
+    "test:run": "bunx --bun vitest run"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",
