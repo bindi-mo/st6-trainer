@@ -43,7 +43,7 @@
 | **0** | 環境・インターフェース固定 | `scanner_api.h` 拡張、CMake/Cargo 連携確認、設定分離実装 | 安定した FFI 境界、`scanner_config.json`, `app_config.json` | — | **完了** |
 | **1** | テンプレート・設定準備 | アンカー/グリフ/数字/攻撃属性/操作系テンプレートの充足と棚卸し | `src-tauri/templates/`, `src-tauri/config/` | Phase 0 | **完了** |
 | **2** | ラスタ正規化・キャリブレーション | `scanner.cpp`: 正規化(§6.1)、アンカーY探索・コンセンサス(§2)、fail-closed | `st6_scanner.dll` (v1) | Phase 0, 1 | **完了**（簡易方式・§2.5 参照） |
-| **3** | 入力履歴追跡 | 19行スロット・slot0読み・シグネチャ/カウンター状態マシン(§4) | `input_events` 出力対応 | Phase 2 | 未着手 |
+| **3** | 入力履歴追跡 | 19行スロット・slot0読み・シグネチャ/カウンター状態マシン(§4) | `input_events` 出力対応 | Phase 2 | **完了**（ビルド成功） |
 | **4** | ゲージ・フレームメーター | HSVゲージ(§3.2, §5)、2ROIグループ・3フレームラッチ・攻撃属性(§3.3) | `frame_telemetry`, `move_events` | Phase 2 | 未着手 |
 | **5** | Rust FFI・出力パイプライン | `scanner_ffi.rs` 拡充、中間JSONL→SQLite 変換、インバリアントチェック | `sf6-extract` CLI / Tauri コマンド | Phase 2–4 | 30% |
 | **6** | 手動キャリブレーション UI | Tauri フロントエンド: 候補オフセット表示・±1pxステッパー・`manual_verified` フラグ(§2.7) | `sf6-gui` 機能 | Phase 1, 5 | 未着手 |
@@ -148,6 +148,54 @@ Phase 2 は「ラスタ正規化」と「キャリブレーション」を実装
 | ラウンド検出 | 未実装 | Phase 3–4 で HP リセット/タイマーから検出（§4.5, §7.2） |
 | レターボックス除去 | 全面＝コンテンツ扱い | 非 16:9 入力対応時に実装 |
 | キャラ名・操作系 | 空文字（スタブ） | Phase 3 で実装 |
+
+## 2B. Phase 3 — **完了**（入力履歴追跡）
+
+Phase 3 は「入力履歴追跡」を実装した。`scanner_next_input_event()` により、19行スロットから P1/P2 の入力イベントを抽出する。
+
+### 2B.1 新規ファイル
+
+| ファイル | 内容 |
+|----------|------|
+| `scanner-cpp/input_tracker.h` | `InputTracker` クラス、`InputRow`/`InputSegment`/`ControlTypeResult`/`GlyphMatch` 構造体定義 |
+| `scanner-cpp/input_tracker.cpp` | テンプレートマッチング（方向 1-9、ボタン classic/modern、カウンター数字）、操作系バッジ検出、状態マシンによるセグメント構築 |
+
+### 2B.2 `scanner.cpp` への変更
+
+- `scanner_api_version()` を **0.3.0** に更新（Phase 3）
+- `ScannerImpl` に `unique_ptr<InputTracker> input_tracker`、`bool input_tracker_initialized`、`int input_frame_counter` を追加
+- `scanner_get_metadata()` で `InputTracker` を初期化（`set_template_pack_path`、`rows_visible`、`input_glyph_threshold` を設定）
+- `scanner_next_input_event()` を新規実装：
+  1. フレーム読み込み・黒フレームスキップ・正規化
+  2. 最初の有効フレームで `resolve_control_type()` を P1/P2 それぞれ実行（操作系判定）
+  3. 19行スロットを P1→P2 の順でスキャンし、`read_input_row()` + `build_segment()` で入力セグメントを構築
+  4. `InputEvent` 構造体に方向・ボタン・品質フラグ等をコピーして出力
+
+### 2B.3 `InputTracker` の実装詳細
+
+- **方向テンプレートマッチング**: `dir/` ディレクトリの `1`〜`9`（`5` 除く）を `TM_CCOEFF_NORMED` でマッチ、最大 2 マッチ（斜め入力対応）
+- **ボタンテンプレートマッチング**: 操作系に応じて `btn_classic`（`LP/MP/HP/LK/MK/HK`）または `btn_modern`（`L/M/H/SP/AUTO/DP`）を使用、最大 3 マッチ
+- **カウンター読み取り**: `num/` ディレクトリの数字テンプレート、`F`=不明、`-`=0
+- **操作系バッジ検出**: 上部 25% 領域で `classic.png` / `modern.png` をマッチングし、信頼度の高い方を採用
+- **状態マシン**: 連続する同一入力をセグメント化し、`frame_start`/`frame_end`/`hold_frames` 等を算出
+
+### 2B.4 ビルド・検証
+
+- `CMakeLists.txt` に `input_tracker.cpp` を追加
+- `scanner_api_version()` を **0.3.0** に更新
+- `scanner.cpp` に `using namespace st6;` を追加（`InputTracker` 等が `st6` 名前空間にあるため）
+- `scanner_next_input_event()` の重複/早期クロージングバグを修正
+- **ビルド結果**: `st6_scanner.dll` が正常にビルド成功（エラーなし、C4819 警告のみ）
+
+### 2B.5 既知の制約・Phase 4 への申し送り
+
+| 項目 | 現状 | 申し送り |
+|------|------|----------|
+| Y オフセット | 0 固定（暫定） | Phase 4 で実ゲージ位置から確定 |
+| 操作系判定 | 最初の有効フレームで 1 回のみ | 途中で操作系が変わるケースは未対応 |
+| ラウンド検出 | 未実装 | Phase 4 で HP リセット/タイマーから検出（§4.5, §7.2） |
+| キャラ名 | 空文字（スタブ） | Phase 4 で実装 |
+| セグメントの frame_start/frame_end | row_index を暫定使用 | 実際のフレームインデックスで上書きが必要 |
 
 ## 3. リスクと対策（リポジトリ固有）
 
