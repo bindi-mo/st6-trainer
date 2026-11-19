@@ -1,5 +1,7 @@
 # ST6 Trainer
 
+⚠️ **Still under development — not yet ready for training.**
+
 Street Fighter 6 AI Trainer — a desktop application that analyzes your recorded SF6 match and replay videos (MP4/MKV), identifies the causes of getting hit, verifies guaranteed counterattacks and interrupts based on frame data, and presents concrete training mode practice menus tailored to your controller (pad, arcade stick, or leverless).
 
 ## Tech Stack
