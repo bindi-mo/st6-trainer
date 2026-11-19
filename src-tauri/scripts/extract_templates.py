@@ -54,7 +54,9 @@ else:
 DEFAULT_VIDEO_PATH = Path(__file__).parent.parent / "videos"
 TEMPLATE_ROOT = Path(__file__).parent.parent / "templates"
 
-# カテゴリ定義（英語固定）
+# カテゴリ定義
+# 各エントリ: "キー": (ディレクトリ名, [テンプレート名...])
+# 保存先は CATEGORY_LOCALES を参照して決定される（多言語カテゴリは <dir>/<locale>/ 以下）
 CATEGORIES = {
     "1": (
         "anchor",
@@ -90,10 +92,63 @@ CATEGORIES = {
             "F",
         ],
     ),
-    "6": ("names", []),
-    "7": ("attack_property/EN", ["High", "Mid", "Low", "Throw"]),
-    "8": ("attack_property/JP", ["High", "Mid", "Low", "Throw"]),
+    "6": (
+        "names",
+        [
+            "ryu",
+            "luke",
+            "jamie",
+            "chunli",
+            "guile",
+            "kimberly",
+            "juri",
+            "ken",
+            "blanka",
+            "dhalsim",
+            "ehonda",
+            "deejay",
+            "manon",
+            "jp",
+            "zangief",
+            "lily",
+            "cammy",
+            "rashid",
+            "aki",
+            "ed",
+            "gouki_akuma",
+            "vega_mbison",
+            "terry",
+            "mai",
+            "elena",
+            "sagat",
+            "cviper",
+            "alex",
+            "ingrid",
+            "yasmine",
+            "arjun",
+        ],
+    ),
+    "7": ("attack_property", ["High", "Mid", "Low", "Throw"]),
 }
+
+# ===== multilingual categories =====
+# dir name -> locale definitions (order = Prev/Next cycle order)
+# Categories listed here are saved under <dir>/<locale>/.
+# Categories not listed keep the legacy layout <dir>/.
+#
+# ファイル名は言語間で共通（例: attack_property/EN/High.png と
+# attack_property/JP/High.png）。言語ごとに別名を付けたい場合は
+# 3 要素目の dict で {locale: name} を指定する。
+CATEGORY_LOCALES = {
+    "attack_property": [
+        ("EN", ["High", "Mid", "Low", "Throw"]),
+        ("JP", ["High", "Mid", "Low", "Throw"]),
+    ],
+}
+
+# Keys for language switching (L = Language)
+KEY_NEXT_LOCALE = ord("l")
+KEY_PREV_LOCALE = ord("L")
 
 # ===== 定数 =====
 WND_NAME = "Template Extractor"
@@ -115,6 +170,7 @@ class State:
         self.current_category = ""
         self.current_names = []
         self.name_idx = 0
+        self.locale_idx = 0  # CATEGORY_LOCALES 内の言語インデックス
         self.zoom = 1.0
         self.pan_x = 0
         self.pan_y = 0
@@ -136,6 +192,52 @@ class State:
 
 
 S = State()
+
+
+# ===== ロケール解決 =====
+def get_locales(category):
+    """カテゴリのロケール定義を返す。
+
+    多言語カテゴリ（CATEGORY_LOCALES に登録済み）は (locale, names) のリスト、
+    それ以外は [("", names)] 形式の単一要素リストを返す。
+    """
+    if category in CATEGORY_LOCALES:
+        return CATEGORY_LOCALES[category]
+    return [("", CATEGORIES_BY_DIR.get(category, []))]
+
+
+def get_locale_name(category, locale_idx):
+    locales = get_locales(category)
+    if not locales:
+        return ""
+    locale_idx = max(0, min(locale_idx, len(locales) - 1))
+    return locales[locale_idx][0]
+
+
+def get_locale_names(category, locale_idx):
+    locales = get_locales(category)
+    if not locales:
+        return []
+    locale_idx = max(0, min(locale_idx, len(locales) - 1))
+    return locales[locale_idx][1]
+
+
+def get_output_dir(category, locale_idx):
+    """保存先ディレクトリを返す。
+
+    ロケールが定義されている場合は <dir>/<locale>/、未定義の場合は <dir>/。
+    """
+    base = TEMPLATE_ROOT / category
+    locale = get_locale_name(category, locale_idx)
+    return base / locale if locale else base
+
+
+def is_multilang(category):
+    return len(get_locales(category)) > 1
+
+
+# ディレクトリ名 → テンプレート名リスト（カテゴリ選択の初期化に使う）
+CATEGORIES_BY_DIR = {v[0]: v[1] for v in CATEGORIES.values()}
 
 
 # ===== ユーティリティ =====
@@ -265,6 +367,12 @@ def draw_status_bar(img):
     parts = [f"Zoom: {S.zoom:.1f}x"]
     if S.current_category:
         parts.append(f"Category: {S.current_category}")
+        if is_multilang(S.current_category):
+            locales = get_locales(S.current_category)
+            cur = get_locale_name(S.current_category, S.locale_idx)
+            parts.append(
+                f"Language: {cur} ({S.locale_idx + 1}/{len(locales)}) [L/Shift+L]"
+            )
         if S.name_idx < len(S.current_names):
             parts.append(
                 f"Next: {S.current_names[S.name_idx]} ({S.name_idx + 1}/{len(S.current_names)})"
@@ -309,13 +417,14 @@ def draw_help(img):
         "  Backspace          : Previous frame",
         "  Trackbar (bottom)  : Click to jump",
         "",
-        "  1-8                : Select category",
+        "  1-7                : Select category",
         "  Left drag          : Select ROI",
         "  Right drag         : Pan viewport",
         "  Mouse wheel        : Zoom in/out",
         "  Enter              : Save template",
         "  n                  : Next template",
         "  p                  : Prev template",
+                "  l / Shift+L        : Next/Prev language",
         "  r                  : Reset zoom/pan",
         "  /                  : Show help",
         "  q                  : Quit",
@@ -325,13 +434,13 @@ def draw_help(img):
     right_lines = [
         "=== Categories ===",
         "",
-        "  1: anchor (6 items)",
+                "  1: anchor (8 items)",
         "  2: btn_classic (6)",
         "  3: btn_modern (7)",
         "  4: dir (8 items)",
         "  5: num (13 items)",
-        "  6: attack_prop/en (4)",
-        "  8: names (dynamic)",
+                "  6: names (dynamic)",
+                "  7: attack_property (4, multi-lang)",
         "",
         "Press any key or click to close",
     ]
@@ -804,11 +913,39 @@ def main():
                     )
             elif bk in [ord(str(i)) for i in range(1, len(CATEGORIES) + 1)]:
                 ck = chr(bk)
-                S.current_category, S.current_names = CATEGORIES[ck]
+                S.current_category, _ = CATEGORIES[ck]
+                S.locale_idx = 0
+                S.current_names = get_locale_names(
+                    S.current_category, S.locale_idx
+                )
                 S.name_idx = 0
                 if S.current_names:
+                    loc = get_locale_name(S.current_category, S.locale_idx)
+                    loc_note = f" [{loc}]" if loc else ""
                     add_info(
-                        f"Category: {S.current_category} ({len(S.current_names)} items)",
+                        f"Category: {S.current_category}{loc_note} ({len(S.current_names)} items)",
+                        (255, 255, 0),
+                    )
+            elif bk == KEY_NEXT_LOCALE or bk == KEY_PREV_LOCALE:
+                if not S.current_category:
+                    add_info("No category selected", (0, 0, 255))
+                elif not is_multilang(S.current_category):
+                    add_info(
+                        f"{S.current_category} has no language variants",
+                        (0, 0, 255),
+                    )
+                else:
+                    step = -1 if bk == KEY_PREV_LOCALE else 1
+                    n_locales = len(get_locales(S.current_category))
+                    S.locale_idx = (S.locale_idx + step) % n_locales
+                    S.current_names = get_locale_names(
+                        S.current_category, S.locale_idx
+                    )
+                    S.name_idx = 0
+                    loc = get_locale_name(S.current_category, S.locale_idx)
+                    add_info(
+                        f"Language: {loc} ({S.locale_idx + 1}/{n_locales}) "
+                        f"- {len(S.current_names)} items",
                         (255, 255, 0),
                     )
             elif bk == ord("n"):
@@ -835,7 +972,9 @@ def main():
                         x1, x2 = sorted([x1, x2])
                         y1, y2 = sorted([y1, y2])
                         roi = S.frame[y1:y2, x1:x2]
-                        out_dir = TEMPLATE_ROOT / S.current_category
+                        out_dir = get_output_dir(
+                            S.current_category, S.locale_idx
+                        )
                         out_dir.mkdir(parents=True, exist_ok=True)
                         out_path = (
                             out_dir / f"{S.current_names[S.name_idx]}.png"
@@ -847,8 +986,12 @@ def main():
                         )
                         cv2.imwrite(str(out_path), rg)
                         print(f"Saved: {out_path}")
+                        loc = get_locale_name(
+                            S.current_category, S.locale_idx
+                        )
+                        loc_note = f"/{loc}" if loc else ""
                         add_info(
-                            f"Saved: {S.current_category}/{S.current_names[S.name_idx]}",
+                            f"Saved: {S.current_category}{loc_note}/{S.current_names[S.name_idx]}",
                             (0, 255, 0),
                         )
                         S.selecting = False
