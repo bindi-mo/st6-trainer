@@ -32,6 +32,8 @@
     ],
     "resources": [
       "st6_scanner.dll",
+      "config/*.json",
+      "templates/**/*",
       "scripts/sf6_frame_data_processor.py",
       "frame_data/*.json"
     ]

@@ -1,0 +1,1 @@
+{"default_output_dir":"./output","last_input_video":"","log_level":"info","num_threads":4,"on_calib_failure":"fail","scanner_config_path":"src-tauri/config/scanner_config.json","template_pack_path":"src-tauri/templates","use_gpu":true}

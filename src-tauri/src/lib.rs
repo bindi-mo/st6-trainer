@@ -1,5 +1,6 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 
+pub mod config;
 pub mod scanner_ffi;
 // pub mod video_types;  // TODO: re-add when needed
 

@@ -133,9 +133,11 @@ extern "C"
     // ===== メイン API =====
 
     // video_path: UTF-8 ファイルパス。config: NULL 可（デフォルト値使用）
+    // 戻り値: 成功時はハンドル、失敗時は NULL（scanner_get_last_error で詳細取得）
     SCANNER_API ScannerHandle scanner_create(const char *video_path, const ScanConfig *config);
 
     // キャリブレーション完了後、最初の telemetry 取得前に呼ぶ
+    // 戻り値: 1=成功, 0=失敗（-1 は将来の拡張用に予約）
     SCANNER_API int scanner_get_metadata(ScannerHandle h, MatchMetadata *out);
 
     // イテレータ: 1=成功, 0=終了, -1=エラー（scanner_get_last_error で詳細）

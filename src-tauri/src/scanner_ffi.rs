@@ -231,6 +231,28 @@ fn get_template_pack_path() -> PathBuf {
     manifest_dir.join("templates")
 }
 
+/// Resolve scanner config JSON path (src-tauri/config/scanner_config.json)
+fn get_scanner_config_path() -> PathBuf {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    manifest_dir.join("config/scanner_config.json")
+}
+
+/// Load scanner config JSON as a string, returning None if not found.
+fn load_scanner_config_json() -> Option<String> {
+    let path = get_scanner_config_path();
+    match std::fs::read_to_string(&path) {
+        Ok(s) => Some(s),
+        Err(e) => {
+            eprintln!(
+                "[Rust] Failed to read scanner config at {}: {}",
+                path.display(),
+                e
+            );
+            None
+        }
+    }
+}
+
 impl Scanner {
     /// Create a new scanner from video file
     pub fn new<P: AsRef<Path>>(
@@ -290,12 +312,24 @@ impl Scanner {
             version.major, version.minor, version.patch
         );
 
-        // Prepare config with template pack path
+        // Prepare config with template pack path and scanner config JSON
         let mut cfg = config.unwrap_or_default();
         let template_pack_cstr = CString::new(template_pack_path.to_string_lossy().as_bytes())?;
         cfg.template_pack_path = template_pack_cstr.as_ptr();
         // Keep the CString alive for the duration of the call
         let _template_pack_cstr_owned = template_pack_cstr;
+
+                // Load scanner config JSON if not already provided
+                let _json_cstr_owned = if cfg.config_json.is_null() {
+                    load_scanner_config_json().and_then(|json| {
+                        CString::new(json).ok().map(|cstr| {
+                            cfg.config_json = cstr.as_ptr();
+                            cstr
+                        })
+                    })
+                } else {
+                    None
+                };
 
         let path_cstr = CString::new(video_path.as_ref().to_string_lossy().as_bytes())?;
         let handle = unsafe { create(path_cstr.as_ptr(), &cfg) };
@@ -411,6 +445,11 @@ fn c_arr_to_string(arr: &[c_char]) -> String {
     let len = arr.iter().position(|&c| c == 0).unwrap_or(arr.len());
     let bytes: Vec<u8> = arr[..len].iter().map(|&c| c as u8).collect();
     String::from_utf8_lossy(&bytes).into_owned()
+}
+
+/// Public wrapper for external callers (smoke tests, examples).
+pub fn c_arr_to_string_pub(arr: &[c_char]) -> String {
+    c_arr_to_string(arr)
 }
 
 fn c_matrix_to_vec(arr: &[[c_char; 32]; 16], count: c_int) -> Vec<String> {
