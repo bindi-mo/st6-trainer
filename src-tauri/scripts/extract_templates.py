@@ -134,6 +134,15 @@ CATEGORIES = {
         ],
     ),
     "7": ("attack_property", ["High", "Mid", "Low", "Throw"]),
+    "8": (
+        "round_logos",
+        [
+            "round",      # "Round ?" の汎用テンプレート（ラウンド番号は不問）
+            "final_round", # "Final Round"
+            "ko",         # "K.O." - ラウンド終了検知用
+            "time_over",  # "TIME OVER" - ラウンド終了検知用
+        ],
+    ),
 }
 
 # ===== multilingual categories =====

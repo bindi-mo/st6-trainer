@@ -45,6 +45,12 @@ struct ScannerConfig
     double threshold_input_glyph = 0.92;
     double threshold_attack_property = 0.92;
 
+    // Round detection thresholds
+    double hp_reset_low_threshold = 0.3;   // HP がこの値未満なら「ラウンド終了」とみなす（補完用）
+    double hp_reset_high_threshold = 0.7;  // HP がこの値を超えたら「ラウンド開始」とみなす（補完用）
+    int round_timer_gap_frames = 180;      // ラウンド間の最小フレーム間隔（3秒 @60fps、タイマーベース補完用）
+    int round_duration_frames = 5940;      // 1ラウンドの想定フレーム数（99秒 @60fps）
+
     // Metadata
     string config_version = "cfg-1.0";
     string template_pack_version = "sf6-ui-2026.11";
@@ -105,11 +111,16 @@ struct ScannerImpl
     vector<CharNameTemplate> char_templates;
     bool char_templates_loaded;
 
+    // Round logo templates (Phase 5)
+    vector<CharNameTemplate> round_logo_templates;
+    bool round_logo_templates_loaded;
+
     // Round detection state (Phase 5)
     double prev_hp_p1;
     double prev_hp_p2;
     int round_index;
     bool round_initialized;
+    int last_reset_frame;   // 前回のラウンドリセット検出フレーム（タイマーベース補完用）
 
     ScannerImpl() : fps(0), total_frames(0), current_frame(0),
                     calibration_done(false), top_y_offset_px(0), bottom_y_offset_px(0),
@@ -121,7 +132,8 @@ struct ScannerImpl
                     char_templates_loaded(false),
                     prev_hp_p1(1.0), prev_hp_p2(1.0),
                     round_index(1),
-                    round_initialized(false) {}
+                    round_initialized(false),
+                    last_reset_frame(0) {}
 
     ~ScannerImpl()
     {
@@ -237,6 +249,12 @@ struct ScannerImpl
         extract_int("consensus_vote_window_px", config.calib_config.consensus_vote_window_px);
         extract_int("search_x_tolerance_px", config.calib_config.search_x_tolerance_px);
 
+        // Round detection config
+        extract_double("hp_reset_low_threshold", config.hp_reset_low_threshold);
+        extract_double("hp_reset_high_threshold", config.hp_reset_high_threshold);
+        extract_int("round_timer_gap_frames", config.round_timer_gap_frames);
+        extract_int("round_duration_frames", config.round_duration_frames);
+
         cout << "[Scanner] Config parsed: " << config.canonical_width << "x" << config.canonical_height
              << " fps=" << config.fps << endl;
     }
@@ -274,6 +292,94 @@ struct ScannerImpl
 
         char_templates_loaded = true;
         cout << "[Scanner] Loaded " << char_templates.size() << " character name templates" << endl;
+    }
+
+    // Load round-related logo templates from templates/round_logos/ directory (Phase 5)
+    // 対象: round_1.png, round_2.png, final_round.png, ko.png, time_over.png など
+    void load_round_logo_templates()
+    {
+        if (round_logo_templates_loaded)
+            return;
+
+        namespace fs = std::filesystem;
+        fs::path logos_dir = fs::path(template_pack_path) / "round_logos";
+        if (!fs::exists(logos_dir))
+        {
+            cout << "[Scanner] Round logos directory not found: " << logos_dir << endl;
+            round_logo_templates_loaded = true;
+            return;
+        }
+
+        for (const auto &entry : fs::directory_iterator(logos_dir))
+        {
+            if (entry.path().extension() == ".png")
+            {
+                Mat tmpl = imread(entry.path().string(), IMREAD_COLOR);
+                if (!tmpl.empty())
+                {
+                    CharNameTemplate ctmpl;
+                    ctmpl.name = entry.path().stem().string();
+                    ctmpl.template_img = tmpl;
+                    round_logo_templates.push_back(move(ctmpl));
+                    cout << "[Scanner] Loaded round logo template: " << ctmpl.name << endl;
+                }
+            }
+        }
+
+        round_logo_templates_loaded = true;
+        cout << "[Scanner] Loaded " << round_logo_templates.size() << " round logo templates" << endl;
+    }
+
+    // Match round logo against templates (Phase 5)
+    // Returns matched logo name (e.g. "round_1", "round_2", "final_round") or empty string
+    string match_round_logo(const Mat &frame, int x_start, int x_end, int y_start, int y_end)
+    {
+        if (round_logo_templates.empty())
+            return "";
+
+        Mat roi = frame.rowRange(y_start, y_end).colRange(x_start, x_end);
+        if (roi.empty())
+            return "";
+
+        Mat gray_roi;
+        if (roi.channels() == 3)
+            cvtColor(roi, gray_roi, COLOR_BGR2GRAY);
+        else
+            gray_roi = roi.clone();
+
+        double best_conf = 0.0;
+        string best_name;
+
+        for (const auto &tmpl : round_logo_templates)
+        {
+            Mat gray_tmpl;
+            if (tmpl.template_img.channels() == 3)
+                cvtColor(tmpl.template_img, gray_tmpl, COLOR_BGR2GRAY);
+            else
+                gray_tmpl = tmpl.template_img.clone();
+
+            // テンプレートが ROI より大きい場合はスキップ
+            if (gray_tmpl.cols > gray_roi.cols || gray_tmpl.rows > gray_roi.rows)
+                continue;
+
+            Mat result;
+            matchTemplate(gray_roi, gray_tmpl, result, TM_CCOEFF_NORMED);
+            double min_val, max_val;
+            Point min_loc, max_loc;
+            minMaxLoc(result, &min_val, &max_val, &min_loc, &max_loc);
+
+            if (max_val > best_conf)
+            {
+                best_conf = max_val;
+                best_name = tmpl.name;
+            }
+        }
+
+        // 信頼度閾値（0.80 以上でマッチとみなす）
+        if (best_conf > 0.80)
+            return best_name;
+
+        return "";
     }
 
     // Match character name against templates (Phase 5)
@@ -528,6 +634,9 @@ struct ScannerImpl
 
         // Phase 5: Load character name templates
         load_char_name_templates();
+
+        // Phase 5: Load round logo templates
+        load_round_logo_templates();
 
         calibration_done = true;
         cout << "[Scanner] Simplified calibration complete: top_y=" << top_y_offset_px
@@ -852,25 +961,71 @@ extern "C"
             out->hp_p1 = hp_p1;
             out->hp_p2 = hp_p2;
 
-            // Phase 5: Round detection via HP reset
+            // Phase 5: Round detection via timer (99秒カウントダウン) + HP reset 補完 + ラウンドロゴ検出
             if (!impl->round_initialized)
             {
                 impl->prev_hp_p1 = hp_p1;
                 impl->prev_hp_p2 = hp_p2;
                 impl->round_initialized = true;
+                impl->last_reset_frame = impl->current_frame;
+                // ラウンド1は最初の有効フレームから開始
             }
             else
             {
-                // Detect HP reset: HP jumps from low to high (round start)
-                bool hp_reset_p1 = (impl->prev_hp_p1 < 0.3 && hp_p1 > 0.7);
-                bool hp_reset_p2 = (impl->prev_hp_p2 < 0.3 && hp_p2 > 0.7);
-                if (hp_reset_p1 || hp_reset_p2)
+                int frames_since_reset = impl->current_frame - impl->last_reset_frame;
+
+                // タイマーベース: 99秒（5940フレーム）経過でラウンド終了と判定
+                bool timer_expired = (frames_since_reset >= impl->config.round_duration_frames);
+
+                // HPリセット補完: HP が低値から高値にジャンプした場合
+                bool hp_reset_p1 = (impl->prev_hp_p1 < impl->config.hp_reset_low_threshold && hp_p1 > impl->config.hp_reset_high_threshold);
+                bool hp_reset_p2 = (impl->prev_hp_p2 < impl->config.hp_reset_low_threshold && hp_p2 > impl->config.hp_reset_high_threshold);
+                bool hp_reset_detected = hp_reset_p1 || hp_reset_p2;
+
+                // ラウンドロゴ検出: 画面中央の "Round ? / Final Round / K.O. / TIME OVER" ロゴ
+                string round_logo = impl->match_round_logo(norm_result.normalized_frame,
+                    static_cast<int>(impl->config.canonical_width * 0.30),
+                    static_cast<int>(impl->config.canonical_width * 0.70),
+                    static_cast<int>(impl->config.canonical_height * 0.35),
+                    static_cast<int>(impl->config.canonical_height * 0.65));
+                bool round_logo_detected = !round_logo.empty();
+
+                // ラウンド開始ロゴかラウンド終了ロゴかを区別
+                bool is_round_start_logo = (round_logo == "round" || round_logo == "final_round");
+                bool is_round_end_logo = (round_logo == "ko" || round_logo == "time_over");
+
+                // 最小間隔チェック（誤検出防止）
+                bool min_interval_passed = (frames_since_reset >= impl->config.round_timer_gap_frames);
+
+                // ラウンド開始ロゴ: round_index をインクリメントしてラウンドリセットと判定
+                if (is_round_start_logo && min_interval_passed)
                 {
                     impl->round_index++;
                     out->hp_reset = 1;
-                    cout << "[Scanner] Round reset detected at frame " << impl->current_frame
+                    impl->last_reset_frame = impl->current_frame;
+                    cout << "[Scanner] Round start logo detected: " << round_logo
+                         << " at frame " << impl->current_frame
                          << " -> round " << impl->round_index << endl;
                 }
+                // ラウンド終了ロゴ: round_index は変更せず、ラウンド終了のみ記録
+                else if (is_round_end_logo && min_interval_passed)
+                {
+                    impl->last_reset_frame = impl->current_frame;
+                    cout << "[Scanner] Round end logo detected: " << round_logo
+                         << " at frame " << impl->current_frame
+                         << " (round " << impl->round_index << " ended)" << endl;
+                }
+                // タイマーまたはHPリセットでラウンドリセット
+                else if ((timer_expired || hp_reset_detected) && min_interval_passed)
+                {
+                    impl->round_index++;
+                    out->hp_reset = 1;
+                    impl->last_reset_frame = impl->current_frame;
+                    cout << "[Scanner] Round reset detected at frame " << impl->current_frame
+                         << " -> round " << impl->round_index
+                         << " (timer=" << timer_expired << ", hp_reset=" << hp_reset_detected << ")" << endl;
+                }
+
                 impl->prev_hp_p1 = hp_p1;
                 impl->prev_hp_p2 = hp_p2;
             }

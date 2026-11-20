@@ -345,7 +345,7 @@ end of replay.
   observations are **never filtered or discarded** — they are frequently deliberate buffering.
   They are only classified: records with `frame_start < round_start_frame` carry `is_preround`
   and `NON_ACTIONABLE`.
-- **Round boundaries come from HP reset / timer reset / KO (§7.2), never from the input history.**
+- **Round boundaries come from round start logo ("Round ?" / "Final Round") / round end logo ("K.O." / "TIME OVER") / timer reset / HP reset (§7.2), never from the input history.**
   The input history persists across rounds and is displaced only by the 19-row limit. A segment
   is **never split** at a boundary; round membership is recovered by joining on frames.
 - **`round_start_frame` is never cross-checked with the yellow fill.** The yellow exists only
