@@ -746,9 +746,20 @@ extern "C"
             snprintf(out->character_name_p1, sizeof(out->character_name_p1), "%s", char_p1.c_str());
             snprintf(out->character_name_p2, sizeof(out->character_name_p2), "%s", char_p2.c_str());
 
-            // Control types (stub for now - Phase 3+)
-            snprintf(out->control_type_p1, sizeof(out->control_type_p1), "");
-            snprintf(out->control_type_p2, sizeof(out->control_type_p2), "");
+            // Control types (Phase 6: resolved from classic.png/modern.png classifier templates)
+            // Resolve control type from the first valid frame and store in input tracker
+            auto ctrl_p1 = impl->input_tracker->resolve_control_type(impl->first_frame, impl->config.threshold_input_glyph);
+            auto ctrl_p2 = impl->input_tracker->resolve_control_type(impl->first_frame, impl->config.threshold_input_glyph);
+            impl->input_tracker->set_control_type("P1", ctrl_p1.control_type);
+            impl->input_tracker->set_control_type("P2", ctrl_p2.control_type);
+
+            snprintf(out->control_type_p1, sizeof(out->control_type_p1), "%s", ctrl_p1.control_type.c_str());
+            snprintf(out->control_type_p2, sizeof(out->control_type_p2), "%s", ctrl_p2.control_type.c_str());
+
+            cout << "[Scanner] Control type P1: " << ctrl_p1.control_type
+                 << " (conf=" << ctrl_p1.confidence << ")" << endl;
+            cout << "[Scanner] Control type P2: " << ctrl_p2.control_type
+                 << " (conf=" << ctrl_p2.confidence << ")" << endl;
 
             out->detected_at_frame = 1;
 
@@ -809,6 +820,7 @@ extern "C"
                 fmc.roi_y_start = static_cast<int>(impl->config.canonical_height * 0.70);
                 fmc.roi_y_end = impl->config.canonical_height;
                 impl->frame_meter_detector->set_config(fmc);
+                impl->frame_meter_detector->set_template_pack_path(impl->template_pack_path);
                 impl->frame_meter_detector_initialized = true;
                 cout << "[Scanner] Frame meter detector initialized" << endl;
             }
@@ -841,6 +853,45 @@ extern "C"
         {
             g_last_error = "Unknown exception in scanner_get_metadata";
             return -1;
+        }
+    }
+
+    SCANNER_API int scanner_set_manual_offsets(ScannerHandle handle, int top_y_offset_px, int bottom_y_offset_px, int manual_verified)
+    {
+        try
+        {
+            if (!handle)
+            {
+                g_last_error = "Invalid handle";
+                return 0;
+            }
+            auto *impl = static_cast<ScannerImpl *>(handle);
+
+            // 手動オフセットを適用
+            impl->top_y_offset_px = top_y_offset_px;
+            impl->bottom_y_offset_px = bottom_y_offset_px;
+
+            // メタデータが既に出力済みの場合は manual_verified フラグを更新
+            if (impl->metadata_emitted)
+            {
+                impl->metadata.manual_verified = manual_verified;
+            }
+
+            cout << "[Scanner] Manual offsets set: top_y=" << top_y_offset_px
+                 << " bottom_y=" << bottom_y_offset_px
+                 << " manual_verified=" << manual_verified << endl;
+
+            return 1;
+        }
+        catch (const std::exception &e)
+        {
+            g_last_error = std::string("Exception in scanner_set_manual_offsets: ") + e.what();
+            return 0;
+        }
+        catch (...)
+        {
+            g_last_error = "Unknown exception in scanner_set_manual_offsets";
+            return 0;
         }
     }
 
@@ -1103,18 +1154,6 @@ extern "C"
                 g_last_error = norm_result.error_code + ": " + norm_result.error_message;
                 cout << "[Scanner] Normalization failed: " << g_last_error << endl;
                 return -1;
-            }
-
-            // 操作系を解決（最初の有効フレームで1回だけ）
-            if (impl->input_frame_counter == 1)
-            {
-                auto ctrl_p1 = impl->input_tracker->resolve_control_type(frame, impl->config.threshold_input_glyph);
-                auto ctrl_p2 = impl->input_tracker->resolve_control_type(frame, impl->config.threshold_input_glyph);
-
-                cout << "[Scanner] Control type P1: " << ctrl_p1.control_type
-                     << " (conf=" << ctrl_p1.confidence << ")" << endl;
-                cout << "[Scanner] Control type P2: " << ctrl_p2.control_type
-                     << " (conf=" << ctrl_p2.confidence << ")" << endl;
             }
 
             // 19行スロットを読み取り（P1とP2の両方）

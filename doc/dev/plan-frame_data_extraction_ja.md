@@ -46,7 +46,7 @@
 | **3** | 入力履歴追跡 | 19行スロット・slot0読み・シグネチャ/カウンター状態マシン(§4) | `input_events` 出力対応 | Phase 2 | **完了**（ビルド成功） |
 | **4** | ゲージ・フレームメーター | HSVゲージ(§3.2, §5)、2ROIグループ・3フレームラッチ・攻撃属性(§3.3) | `frame_telemetry`, `move_events` | Phase 2 | **完了** |
 | **5** | Rust FFI・出力パイプライン | `scanner_ffi.rs` 拡充、中間JSONL→SQLite 変換、インバリアントチェック | Tauri コマンド | Phase 2–4 | **完了** |
-| **6** | 手動キャリブレーション UI | Tauri フロントエンド: 候補オフセット表示・±1pxステッパー・`manual_verified` フラグ(§2.7) | `sf6-gui` 機能 | Phase 1, 5 | 未着手 |
+| **6** | 手動キャリブレーション UI | Tauri フロントエンド: 候補オフセット表示・±1pxステッパー・`manual_verified` フラグ(§2.7) | `sf6-gui` 機能 | Phase 1, 5 | **完了** |
 | **7** | 統合・検証・リリース | 検証用リプレイでの E2E、§7.5 インバリアント違反ゼロ確認、エラーコード発火テスト | リリースビルド、テストレポート | Phase 0–6 | 未着手 |
 
 ## 2. Phase 0 — **完了**
@@ -303,6 +303,59 @@ Phase 5 は「Rust FFI・出力パイプライン」を完了した。以下は�
 | キャラ名マッチング | `names/` に `aki.png`, `alex.png` のみ | 他キャラテンプレートの追加が必要 |
 | 操作系判定 | 空文字（スタブ） | Phase 6 で実装 |
 | 手動キャリブレーション UI | 未実装 | Phase 6 で Tauri フロントエンド実装 |
+
+## 2E. Phase 6 — **完了**
+
+Phase 6 は「手動キャリブレーション UI」を完了した。以下は完了内容の記録です。
+
+### 2E.1 フレームメーター数字読み取りの精緻化（`frame_meter.cpp`）
+
+- `read_digit()` を実装: `num/` ディレクトリの数字テンプレート（0-9, F, minus）を `TM_CCOEFF_NORMED` でマッチングし、閾値 `config_.threshold`（0.90）以上で検出
+- `read_meter_block()` を更新: フレームメーター表示エリアを 4 ブロック（startup/active/recovery/advantage）に分割し、各ブロックから数字を読み取り
+- すべての数字が検出された場合のみ `detected = true`、それ以外は `detected = false`
+- `set_template_pack_path()` を追加し、`num/` テンプレートパスを設定可能に
+- `scanner.cpp` で `frame_meter_detector->set_template_pack_path()` を呼び出し
+
+### 2E.2 操作系判定の実装（`input_tracker.cpp`）
+
+- `detect_control_badge()` を §5.3 準拠に再実装: `btn_classic/classic.png` と `btn_modern/modern.png` を操作系分類器テンプレートとして明示的にマッチング
+- どちらも閾値未満の場合は `control_type` を空文字（null）として出力
+- 個別のボタングリフ（LP/HP/LK/HK / L/M/H/SP など）は分類器テンプレートから除外
+- `set_control_type()` を追加し、解決済みの操作系をプレイヤーごとに保存
+- `read_input_row()` で保存済みの操作系を使用してボタングリフをマッチング
+- `scanner.cpp` で `scanner_get_metadata()` 内で操作系を解決し、`MatchMetadata.control_type_p1/p2` に設定
+
+### 2E.3 手動キャリブレーション C API（`scanner_api.h` / `scanner.cpp`）
+
+- `scanner_set_manual_offsets()` を追加: `top_y_offset_px` / `bottom_y_offset_px` を手動上書きし、`manual_verified` フラグを設定
+- 戻り値: 1=成功 / 0=失敗
+- `MatchMetadata.manual_verified` は -1=null / 0=false / 1=true
+
+### 2E.4 Rust FFI + Tauri コマンド（`scanner_ffi.rs` / `commands.rs`）
+
+- `Scanner::set_manual_offsets()` メソッドを追加: C API `scanner_set_manual_offsets` をラップ
+- `set_manual_offsets` Tauri コマンドを追加: フロントエンドから手動オフセット保存を呼び出し
+- `lib.rs` でコマンドを登録
+
+### 2E.5 フロントエンド手動キャリブレーション UI（`App.tsx` / `App.css`）
+
+- `ScanMetadata` インターフェースを追加: `match_id`, `character_name_p1/p2`, `control_type_p1/p2`, `top_y_offset_px`, `bottom_y_offset_px`, `manual_verified` 等
+- メタデータ表示セクションを追加: スキャン結果のメタデータを一覧表示
+- 手動キャリブレーションセクションを追加:
+  - Top Y Offset / Bottom Y Offset の ±1px ステッパー
+  - 「Save Manual Offsets (Verify)」ボタンで `set_manual_offsets` コマンドを呼び出し
+  - `manual_verified === true` 時に成功メッセージを表示
+- キャリブレーション保存中はステッパーとボタンを無効化
+
+### 2E.6 キャラ名テンプレートの追加（`templates/names/`）
+
+- `aki.png`, `alex.png` に加え、26 キャラクターテンプレートを追加: ryu, ken, chunli, luke, jamie, kimberly, marisa, jp, deejay, manon, zangief, blanka, cammy, guile, honda, akuma, ed, rashid, lily, bison, vega, sagat, mika, abigail, falke, sakura, terry
+
+### 2E.7 ビルド・検証
+
+- C++ DLL: `st6_scanner.dll` が正常にビルド成功
+- Rust: `cargo build` 成功、`cargo test` 12 件すべて成功
+- フロントエンド: TypeScript コンパイル成功
 
 ## 3. リスクと対策（リポジトリ固有）
 

@@ -39,6 +39,9 @@ namespace st6
         // 設定を適用
         void set_config(const FrameMeterConfig &cfg);
 
+        // テンプレートパックパスを設定
+        void set_template_pack_path(const std::string &path);
+
         // フレームからフレームメーターを検出
         // 3フレームラッチ: 同一読み取りが3フレーム連続で確定した場合のみ出力
         FrameMeterReading detect(const cv::Mat &frame, int frame_index);
@@ -48,6 +51,9 @@ namespace st6
 
     private:
         FrameMeterConfig config_;
+
+        // テンプレートパックパス (num/ テンプレート用)
+        std::string template_pack_path_;
 
         // ラッチ用バッファ
         std::vector<FrameMeterReading> latch_buffer_;

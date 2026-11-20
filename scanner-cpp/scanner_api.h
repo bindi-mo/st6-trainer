@@ -140,6 +140,11 @@ extern "C"
     // 戻り値: 1=成功, 0=失敗（-1 は将来の拡張用に予約）
     SCANNER_API int scanner_get_metadata(ScannerHandle h, MatchMetadata *out);
 
+    // 手動キャリブレーションオフセットを設定（§2.7 / §7.1 準拠）
+    // top_y_offset_px / bottom_y_offset_px を手動で上書きし、manual_verified フラグを設定する
+    // 戻り値: 1=成功, 0=失敗
+    SCANNER_API int scanner_set_manual_offsets(ScannerHandle h, int top_y_offset_px, int bottom_y_offset_px, int manual_verified);
+
     // イテレータ: 1=成功, 0=終了, -1=エラー（scanner_get_last_error で詳細）
     SCANNER_API int scanner_next_telemetry(ScannerHandle h, FrameTelemetry *out);
     SCANNER_API int scanner_next_input_event(ScannerHandle h, InputEvent *out); // player は構造体内

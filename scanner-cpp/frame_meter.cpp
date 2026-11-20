@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <iostream>
 #include <cstring>
+#include <filesystem>
 
 using namespace cv;
 using namespace std;
@@ -28,6 +29,11 @@ namespace st6
         config_ = cfg;
     }
 
+    void FrameMeterDetector::set_template_pack_path(const std::string &path)
+    {
+        template_pack_path_ = path;
+    }
+
     void FrameMeterDetector::reset()
     {
         latch_buffer_.clear();
@@ -38,11 +44,74 @@ namespace st6
     int FrameMeterDetector::read_digit(const Mat &roi, int /*frame_index*/)
     {
         // num/ テンプレート (0-9, F, minus) でテンプレートマッチング
-        // ここでは簡易実装: テンプレートパスが未設定の場合は -1 (未検出)
-        // 実際のテンプレートマッチングは InputTracker と同様のロジックを使用
-        // フレームメーター用の専用テンプレートディレクトリは num/ を流用
-        (void)roi;
-        return -1; // 未検出
+        // テンプレートパスは scanner.cpp から設定済みの template_pack_path_ を使用
+        namespace fs = std::filesystem;
+        fs::path num_dir = fs::path(template_pack_path_) / "num";
+        if (!fs::exists(num_dir))
+        {
+            return -1; // テンプレートディレクトリが存在しない
+        }
+
+        Mat roi_gray;
+        if (roi.channels() == 3)
+            cvtColor(roi, roi_gray, COLOR_BGR2GRAY);
+        else
+            roi_gray = roi.clone();
+
+        const vector<string> digit_names = {"0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "F", "minus"};
+
+        double best_conf = 0.0;
+        string best_label;
+
+        for (const auto &name : digit_names)
+        {
+            fs::path tmpl_path = num_dir / (name + ".png");
+            if (!fs::exists(tmpl_path))
+                continue;
+
+            Mat tmpl = imread(tmpl_path.string(), IMREAD_COLOR);
+            if (tmpl.empty())
+                continue;
+
+            Mat tmpl_gray;
+            if (tmpl.channels() == 3)
+                cvtColor(tmpl, tmpl_gray, COLOR_BGR2GRAY);
+            else
+                tmpl_gray = tmpl.clone();
+
+            // テンプレートが ROI より大きい場合はスキップ
+            if (tmpl_gray.cols > roi_gray.cols || tmpl_gray.rows > roi_gray.rows)
+                continue;
+
+            Mat result;
+            matchTemplate(roi_gray, tmpl_gray, result, TM_CCOEFF_NORMED);
+            double min_val, max_val;
+            Point min_loc, max_loc;
+            minMaxLoc(result, &min_val, &max_val, &min_loc, &max_loc);
+
+            if (max_val > best_conf && max_val >= config_.threshold)
+            {
+                best_conf = max_val;
+                best_label = name;
+            }
+        }
+
+        if (best_label.empty())
+            return -1; // 未検出
+
+        if (best_label == "F")
+            return -1; // F = 不明/フリーズ
+        if (best_label == "minus")
+            return 0;
+
+        try
+        {
+            return stoi(best_label);
+        }
+        catch (...)
+        {
+            return -1;
+        }
     }
 
     FrameMeterReading FrameMeterDetector::read_meter_block(const Mat &frame)
@@ -84,14 +153,46 @@ namespace st6
             return reading;
         }
 
-        // 簡易実装: フレームメーターが検出されたと仮定し、デフォルト値を返す
-        // 実際の数字読み取りは Phase 4 のテンプレートマッチング実装時に精緻化
-        reading.detected = true;
-        reading.confidence = 0.5; // 暫定: 低信頼度
-        reading.startup_frames = 0;
-        reading.active_frames = 0;
-        reading.recovery_frames = 0;
-        reading.advantage = 0;
+        // フレームメーター数字読み取り (Phase 6: テンプレートマッチング精緻化)
+        // フレームメーター表示エリアを 4 ブロックに分割:
+        //   startup (左), active (中左), recovery (中右), advantage (右)
+        int meter_width = gray.cols;
+        int block_w = meter_width / 4;
+
+        auto read_block_digit = [&](int block_idx) -> int
+        {
+            int x_start = block_idx * block_w;
+            int x_end = (block_idx + 1) * block_w;
+            if (x_end > gray.cols)
+                x_end = gray.cols;
+            if (x_start >= x_end)
+                return -1;
+
+            Mat digit_roi = gray.colRange(x_start, x_end);
+            return read_digit(digit_roi, 0);
+        };
+
+        int startup = read_block_digit(0);
+        int active = read_block_digit(1);
+        int recovery = read_block_digit(2);
+        int advantage = read_block_digit(3);
+
+        // すべての数字が検出された場合のみ detected = true
+        if (startup >= 0 && active >= 0 && recovery >= 0 && advantage >= 0)
+        {
+            reading.detected = true;
+            reading.startup_frames = startup;
+            reading.active_frames = active;
+            reading.recovery_frames = recovery;
+            reading.advantage = advantage;
+            reading.confidence = config_.threshold; // テンプレートマッチング閾値を信頼度として使用
+        }
+        else
+        {
+            // 部分検出: detected = false、デフォルト値
+            reading.detected = false;
+            reading.confidence = 0.0;
+        }
 
         return reading;
     }

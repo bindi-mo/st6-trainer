@@ -169,39 +169,81 @@ namespace st6
         // 実際の位置はキャリブレーション結果に依存するが、ここでは簡易的に上部領域を検索
         Mat roi = frame.rowRange(0, frame.rows / 4);
 
-        auto classic_matches = match_templates(roi, "btn_classic", threshold, 1);
-        auto modern_matches = match_templates(roi, "btn_modern", threshold, 1);
+        // §5.3: classic.png / modern.png は操作系分類器テンプレート（ボタングリフではない）
+        // これらを明示的にマッチングして操作系を判定
+        Mat classic_tmpl = load_template("btn_classic", "classic");
+        Mat modern_tmpl = load_template("btn_modern", "modern");
 
-        // classic.png / modern.png は分類器テンプレートなので除外（グリフではない）
-        // ここでは個別のボタングリフ（LP, HP, LK, HK / L, M, H, SP など）で判定
+        double classic_conf = 0.0;
+        double modern_conf = 0.0;
 
-        if (!classic_matches.empty() && !modern_matches.empty())
+        if (!classic_tmpl.empty())
         {
-            // 両方検出された場合は信頼度の高い方を採用
-            if (classic_matches[0].confidence >= modern_matches[0].confidence)
-            {
-                result.control_type = "classic";
-                result.confidence = classic_matches[0].confidence;
-            }
+            Mat roi_gray, tmpl_gray;
+            if (roi.channels() == 3)
+                cvtColor(roi, roi_gray, COLOR_BGR2GRAY);
             else
+                roi_gray = roi.clone();
+            if (classic_tmpl.channels() == 3)
+                cvtColor(classic_tmpl, tmpl_gray, COLOR_BGR2GRAY);
+            else
+                tmpl_gray = classic_tmpl.clone();
+
+            if (tmpl_gray.cols <= roi_gray.cols && tmpl_gray.rows <= roi_gray.rows)
             {
-                result.control_type = "modern";
-                result.confidence = modern_matches[0].confidence;
+                Mat result_mat;
+                matchTemplate(roi_gray, tmpl_gray, result_mat, TM_CCOEFF_NORMED);
+                double min_val, max_val;
+                Point min_loc, max_loc;
+                minMaxLoc(result_mat, &min_val, &max_val, &min_loc, &max_loc);
+                classic_conf = max_val;
             }
-            result.resolved = true;
         }
-        else if (!classic_matches.empty())
+
+        if (!modern_tmpl.empty())
+        {
+            Mat roi_gray, tmpl_gray;
+            if (roi.channels() == 3)
+                cvtColor(roi, roi_gray, COLOR_BGR2GRAY);
+            else
+                roi_gray = roi.clone();
+            if (modern_tmpl.channels() == 3)
+                cvtColor(modern_tmpl, tmpl_gray, COLOR_BGR2GRAY);
+            else
+                tmpl_gray = modern_tmpl.clone();
+
+            if (tmpl_gray.cols <= roi_gray.cols && tmpl_gray.rows <= roi_gray.rows)
+            {
+                Mat result_mat;
+                matchTemplate(roi_gray, tmpl_gray, result_mat, TM_CCOEFF_NORMED);
+                double min_val, max_val;
+                Point min_loc, max_loc;
+                minMaxLoc(result_mat, &min_val, &max_val, &min_loc, &max_loc);
+                modern_conf = max_val;
+            }
+        }
+
+        // §5.3: どちらも閾値未満の場合は control_type は null（空文字）
+        if (classic_conf < threshold && modern_conf < threshold)
+        {
+            result.control_type = "";
+            result.confidence = 0.0;
+            result.resolved = false;
+            return result;
+        }
+
+        // 両方検出された場合は信頼度の高い方を採用
+        if (classic_conf >= modern_conf)
         {
             result.control_type = "classic";
-            result.confidence = classic_matches[0].confidence;
-            result.resolved = true;
+            result.confidence = classic_conf;
         }
-        else if (!modern_matches.empty())
+        else
         {
             result.control_type = "modern";
-            result.confidence = modern_matches[0].confidence;
-            result.resolved = true;
+            result.confidence = modern_conf;
         }
+        result.resolved = true;
 
         return result;
     }
@@ -209,6 +251,14 @@ namespace st6
     ControlTypeResult InputTracker::resolve_control_type(const Mat &frame, double threshold)
     {
         return detect_control_badge(frame, threshold);
+    }
+
+    void InputTracker::set_control_type(const std::string &player, const std::string &control_type)
+    {
+        if (player == "P1")
+            control_type_p1_ = control_type;
+        else if (player == "P2")
+            control_type_p2_ = control_type;
     }
 
     InputRow InputTracker::read_input_row(const Mat &frame, int row_index, const std::string &player)
@@ -249,8 +299,12 @@ namespace st6
         Mat roi = frame(roi_rect);
 
         // 方向キーとボタンをマッチング
-        // 操作系は未解決の場合は classic をデフォルトとする
-        string control_type = "classic"; // 後で resolve_control_type の結果を設定
+        // プレイヤーごとに解決済みの操作系を使用（未解決の場合は classic をデフォルト）
+        string control_type = "classic";
+        if (player == "P1" && !control_type_p1_.empty())
+            control_type = control_type_p1_;
+        else if (player == "P2" && !control_type_p2_.empty())
+            control_type = control_type_p2_;
 
         row.directions = match_directions(roi, input_glyph_threshold);
         row.buttons = match_buttons(roi, input_glyph_threshold, control_type);

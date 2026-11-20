@@ -243,3 +243,83 @@ button:disabled {
   color: #6b7280;
   font-style: italic;
 }
+
+/* Phase 6: Manual Calibration UI */
+.calib-field {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 1rem;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  min-width: 180px;
+}
+
+.calib-field label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #475569;
+}
+
+.stepper {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.stepper button {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  font-size: 1.25rem;
+  font-weight: bold;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.stepper button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.stepper .value {
+  font-family: monospace;
+  font-size: 1.1rem;
+  font-weight: 600;
+  min-width: 32px;
+  text-align: center;
+}
+
+.success {
+  margin-top: 1rem;
+  padding: 1rem;
+  background-color: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  border-radius: 8px;
+  color: #166534;
+  font-size: 0.9rem;
+}
+
+@media (prefers-color-scheme: dark) {
+  .calib-field {
+    background: #0f172a;
+    border-color: #334155;
+  }
+
+  .calib-field label {
+    color: #cbd5e1;
+  }
+
+  .stepper .value {
+    color: #f1f5f9;
+  }
+
+  .success {
+    background-color: #064e3b;
+    border-color: #10b981;
+    color: #6ee7b7;
+  }
+}

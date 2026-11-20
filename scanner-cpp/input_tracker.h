@@ -68,6 +68,9 @@ namespace st6
         // 操作系（classic/modern）を判定（1回のみ実行）
         ControlTypeResult resolve_control_type(const cv::Mat &frame, double threshold);
 
+        // 操作系を設定（resolve_control_type の結果を保存）
+        void set_control_type(const std::string &player, const std::string &control_type);
+
         // 1フレーム分の入力履歴を読み取り
         InputRow read_input_row(const cv::Mat &frame, int row_index, const std::string &player);
 
@@ -80,6 +83,10 @@ namespace st6
 
     private:
         std::string template_pack_path_;
+
+            // 操作系（プレイヤーごと）
+            std::string control_type_p1_;
+            std::string control_type_p2_;
 
         // テンプレート画像を読み込み
         cv::Mat load_template(const std::string &subdir, const std::string &name);

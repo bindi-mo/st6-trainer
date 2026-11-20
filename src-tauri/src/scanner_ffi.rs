@@ -194,6 +194,7 @@ pub struct Scanner {
         Symbol<'static, unsafe extern "C" fn(ScannerHandle, *mut MoveEvent) -> c_int>,
     fn_destroy: Symbol<'static, unsafe extern "C" fn(ScannerHandle)>,
     fn_get_last_error: Symbol<'static, unsafe extern "C" fn() -> *const c_char>,
+    fn_set_manual_offsets: Symbol<'static, unsafe extern "C" fn(ScannerHandle, c_int, c_int, c_int) -> c_int>,
 }
 
 /// Resolve DLL path from src-tauri/ (copied by CMake POST_BUILD)
@@ -313,6 +314,10 @@ fn init_scanner(
         lib.get(b"scanner_get_last_error")
     }
     .map_err(|e| ScannerError::SymbolNotFound(format!("scanner_get_last_error: {}", e)))?;
+    let set_manual_offsets: Symbol<
+        unsafe extern "C" fn(ScannerHandle, c_int, c_int, c_int) -> c_int,
+    > = unsafe { lib.get(b"scanner_set_manual_offsets") }
+        .map_err(|e| ScannerError::SymbolNotFound(format!("scanner_set_manual_offsets: {}", e)))?;
     let api_version: Symbol<unsafe extern "C" fn() -> ScannerVersion> =
         unsafe { lib.get(b"scanner_api_version") }
             .map_err(|e| ScannerError::SymbolNotFound(format!("scanner_api_version: {}", e)))?;
@@ -363,6 +368,7 @@ fn init_scanner(
         fn_next_move_event: next_move_event,
         fn_destroy: destroy,
         fn_get_last_error: get_last_error,
+        fn_set_manual_offsets: set_manual_offsets,
     })
 }
 
@@ -402,6 +408,34 @@ impl Scanner {
             return Err(ScannerError::Operation(err_msg));
         }
         Ok(meta)
+    }
+
+    /// Set manual calibration offsets (Phase 6)
+    /// Returns true if successful
+    pub fn set_manual_offsets(
+        &self,
+        top_y_offset_px: i32,
+        bottom_y_offset_px: i32,
+        manual_verified: i32,
+    ) -> ScannerResult<bool> {
+        let ret = unsafe {
+            (self.fn_set_manual_offsets)(
+                self.handle,
+                top_y_offset_px,
+                bottom_y_offset_px,
+                manual_verified,
+            )
+        };
+        if ret < 0 {
+            let err_ptr = unsafe { (self.fn_get_last_error)() };
+            let err_msg = if err_ptr.is_null() {
+                "Unknown error".to_string()
+            } else {
+                unsafe { CStr::from_ptr(err_ptr) }.to_str()?.to_string()
+            };
+            return Err(ScannerError::Operation(err_msg));
+        }
+        Ok(ret == 1)
     }
 
     /// Get next frame telemetry (iterator)

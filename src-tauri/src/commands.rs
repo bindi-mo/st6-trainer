@@ -117,3 +117,23 @@ pub fn scanner_version() -> Result<[i32; 3], String> {
         Ok([v.major, v.minor, v.patch])
     }
 }
+
+/// Set manual calibration offsets (Phase 6)
+#[tauri::command]
+pub fn set_manual_offsets(
+    app: tauri::AppHandle,
+    video_path: String,
+    top_y_offset_px: i32,
+    bottom_y_offset_px: i32,
+    manual_verified: bool,
+) -> Result<bool, String> {
+    let scanner = Scanner::new(&app, &video_path, None).map_err(|e| e.to_string())?;
+
+    // First get metadata to ensure calibration is done
+    scanner.get_metadata().map_err(|e| e.to_string())?;
+
+    let mv = if manual_verified { 1 } else { 0 };
+    scanner
+        .set_manual_offsets(top_y_offset_px, bottom_y_offset_px, mv)
+        .map_err(|e| e.to_string())
+}
