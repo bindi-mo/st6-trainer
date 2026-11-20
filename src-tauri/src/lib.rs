@@ -15,7 +15,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![greet, commands::scan_video, commands::scanner_version])
+        .invoke_handler(tauri::generate_handler![greet, commands::scan_video, commands::scanner_version, commands::set_manual_offsets])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
