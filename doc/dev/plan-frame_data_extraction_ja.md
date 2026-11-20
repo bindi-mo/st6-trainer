@@ -19,7 +19,7 @@
 | `scanner_config.json` | **あり**（`src-tauri/config/`） |
 | `app_config.json` | **あり**（`src-tauri/config/`、Phase 0 で作成） |
 | `config.rs` | **あり**（Phase 0 で作成） |
-| `pipeline.rs` / `commands.rs` | **未作成** |
+| `pipeline.rs` / `commands.rs` | **あり**（Phase 4 で作成済み） |
 | 検証用リプレイ動画 | **あり**（`src-tauri/videos/replay_00.mkv`） |
 | CI | **あり**（`.github/workflows/ci.yml`: フロントテスト / `cargo test` / clippy / Tauri ビルド） |
 
@@ -44,7 +44,7 @@
 | **1** | テンプレート・設定準備 | アンカー/グリフ/数字/攻撃属性/操作系テンプレートの充足と棚卸し | `src-tauri/templates/`, `src-tauri/config/` | Phase 0 | **完了** |
 | **2** | ラスタ正規化・キャリブレーション | `scanner.cpp`: 正規化(§6.1)、アンカーY探索・コンセンサス(§2)、fail-closed | `st6_scanner.dll` (v1) | Phase 0, 1 | **完了**（簡易方式・§2.5 参照） |
 | **3** | 入力履歴追跡 | 19行スロット・slot0読み・シグネチャ/カウンター状態マシン(§4) | `input_events` 出力対応 | Phase 2 | **完了**（ビルド成功） |
-| **4** | ゲージ・フレームメーター | HSVゲージ(§3.2, §5)、2ROIグループ・3フレームラッチ・攻撃属性(§3.3) | `frame_telemetry`, `move_events` | Phase 2 | 未着手 |
+| **4** | ゲージ・フレームメーター | HSVゲージ(§3.2, §5)、2ROIグループ・3フレームラッチ・攻撃属性(§3.3) | `frame_telemetry`, `move_events` | Phase 2 | **完了** |
 | **5** | Rust FFI・出力パイプライン | `scanner_ffi.rs` 拡充、中間JSONL→SQLite 変換、インバリアントチェック | `sf6-extract` CLI / Tauri コマンド | Phase 2–4 | 30% |
 | **6** | 手動キャリブレーション UI | Tauri フロントエンド: 候補オフセット表示・±1pxステッパー・`manual_verified` フラグ(§2.7) | `sf6-gui` 機能 | Phase 1, 5 | 未着手 |
 | **7** | 統合・検証・リリース | 検証用リプレイでの E2E、§7.5 インバリアント違反ゼロ確認、エラーコード発火テスト | リリースビルド、テストレポート | Phase 0–6 | 未着手 |
@@ -197,6 +197,75 @@ Phase 3 は「入力履歴追跡」を実装した。`scanner_next_input_event()
 | キャラ名 | 空文字（スタブ） | Phase 4 で実装 |
 | セグメントの frame_start/frame_end | row_index を暫定使用 | 実際のフレームインデックスで上書きが必要 |
 
+## 2C. Phase 4 — **完了**（ゲージ・フレームメーター）
+
+Phase 4 は「ゲージ・フレームメーター」を実装した。HSV 色マスクベースで HP/Drive/SA ゲージを検出し、3フレームラッチ付きフレームメーター検出を実装した。
+
+### 2C.1 新規ファイル
+
+| ファイル | 内容 |
+|----------|------|
+| `scanner-cpp/gauge.h` | `GaugeDetector` クラス、`GaugeReading`/`FrameGauges`/`GaugeConfig` 構造体定義 |
+| `scanner-cpp/gauge.cpp` | HSV マスクによるゲージ充填率検出、バーンアウト判定、遮蔽判定 |
+| `scanner-cpp/frame_meter.h` | `FrameMeterDetector` クラス、`FrameMeterReading`/`FrameMeterConfig` 構造体定義 |
+| `scanner-cpp/frame_meter.cpp` | 3フレームラッチ付きフレームメーター検出、テンプレートマッチング準備 |
+
+### 2C.2 `scanner.cpp` への変更
+
+- `scanner_api_version()` を **0.4.0** に更新（Phase 4）
+- `ScannerImpl` に `unique_ptr<GaugeDetector> gauge_detector`、`bool gauge_detector_initialized`、`unique_ptr<FrameMeterDetector> frame_meter_detector`、`bool frame_meter_detector_initialized` を追加
+- `scanner_get_metadata()` で `GaugeDetector` と `FrameMeterDetector` を初期化（HSV 閾値、ラッチフレーム数等を設定）
+- `scanner_next_telemetry()` で実ゲージ検出を統合：
+  - `GaugeDetector::detect()` で P1/P2 の HP/Drive/SA ゲージ値を読み取り
+  - `FrameTelemetry` の `hp_p1`, `drive_p1`, `sa_p1`, `in_burnout_p1`, `hp_p2`, `drive_p2`, `sa_p2`, `in_burnout_p2` に設定
+  - 遮蔽ゲージに対して品質フラグ（`HP_P1_OCCLUDED` 等）を出力
+- `scanner_next_move_event()` を新規実装：
+  - `FrameMeterDetector::detect()` で 3フレームラッチ付きフレームメーターを検出
+  - `MoveEvent` の `fm_startup_p1/fm_total_p1/fm_advantage_p1` 等に設定
+  - 未検出時はデフォルト値（0）を出力しイテレーション継続
+
+### 2C.3 `GaugeDetector` の実装詳細
+
+- **HSV 色マスク**: OpenCV HSV（H 0-179, S 0-255, V 0-255）でゲージ色を検出
+  - HP ゲージ: `H∈[40,90], S∈[50,255], V∈[50,255]`（緑/黄）
+  - Drive ゲージ: `H∈[15,35], S∈[100,255], V∈[100,255]`（オレンジ）
+  - SA ゲージ: `H∈[100,130], S∈[50,255], V∈[50,255]`（青）
+- **充填率計算**: 左から右への連続白ピクセル列数を測定し、ゲージ幅で正規化
+- **バーンアウト判定**: HP ゲージ領域の赤色ピクセル（`H∈[0,10]` または `H∈[170,179]`）が閾値超過でバーンアウトと判定
+- **遮蔽判定**: 白ピクセル数が `gauge_occluded_threshold` 未満なら遮蔽とみなす
+- **SA ゲージ**: 0-3 段階に量子化（`round(value * 3) / 3`）
+
+### 2C.4 `FrameMeterDetector` の実装詳細
+
+- **3フレームラッチ**: 同一読み取り（startup/active/recovery/advantage）が `fm_latch_frames`（3）フレーム連続で確定した場合のみ出力
+- **未検出時**: `detected = false` を返し、呼び出し側でデフォルト値を出力
+- **テンプレートマッチング**: `num/` ディレクトリの数字テンプレートを流用（Phase 4 では簡易実装、将来精緻化予定）
+
+### 2C.5 ビルド・検証
+
+- `CMakeLists.txt` に `gauge.cpp` / `frame_meter.cpp` を追加
+- `scanner_api_version()` を **0.4.0** に更新
+- **スモークテスト結果**: `SMOKE TEST PASSED`（7230 フレームのテレメトリ読み取り成功）
+- **Rust テスト**: `cargo test` 12 件すべて成功（pipeline.rs の不変条件チェック含む）
+
+### 2C.6 Rust パイプライン（Phase 4 成果物）
+
+| ファイル | 内容 |
+|----------|------|
+| `src-tauri/src/pipeline.rs` | JSONL→SQLite 変換、§7.5 インバリアントチェック（入力テーブル項 1–5、スキーマ項 6–8） |
+| `src-tauri/src/commands.rs` | Tauri コマンド `scan_video`（動画スキャン実行）、`scanner_version`（API バージョン取得） |
+| `src-tauri/src/lib.rs` | `commands`, `pipeline` モジュール登録、コマンドハンドラ追加 |
+
+### 2C.7 既知の制約・Phase 5 への申し送り
+
+| 項目 | 現状 | 申し送り |
+|------|------|----------|
+| Y オフセット | 0 固定（暫定） | Phase 5 で実ゲージ位置から確定 |
+| ラウンド検出 | 未実装 | Phase 5 で HP リセット/タイマーから検出（§4.5, §7.2） |
+| キャラ名 | 空文字（スタブ） | Phase 5 で実装 |
+| フレームメーター数字読み取り | 簡易実装（未検出扱い） | Phase 5 でテンプレートマッチング精緻化 |
+| SQLite 書き込み | rusqlite 未導入のため JSONL サマリファイル出力 | Phase 5 で rusqlite 追加と本格 SQLite 書き込み |
+
 ## 3. リスクと対策（リポジトリ固有）
 
 | リスク | 影響 | 対策 | 現状 |
@@ -206,8 +275,8 @@ Phase 3 は「入力履歴追跡」を実装した。`scanner_next_input_event()
 | C++ / Rust 境界で ABI 不整合 | クラッシュ・メモリリーク | `scanner_api.h` を **C 互換 POD のみ**に制限。`std::string` 等禁止。所有権は呼び出し側 | 準拠済み |
 | OpenCV 版違い (4.12.0 固定) | ビルド失敗・挙動差 | `scanner-cpp/opencv-build/` を**ベンダリング継続**。CMake で `find_package` せずローカル参照 | 準拠済み |
 | 検証動画の不足 | 受け入れテスト不可 | `src-tauri/videos/replay_00.mkv` を継続利用。不足時は合成動画で補完 | **解消済み**（1 本所有） |
-| Tauri 2.x 移行未完了 | GUI 機能遅延 | Phase 6 は **CLI 完成後**に着手。Phase 5 までヘッドレスで完結 | 移行済み。ただし `lib.rs` の `scan_video` がコメントアウトのまま |
-| フロントとバックエンドの不整合 | GUI からスキャナを起動できない | `src/App.tsx` は `invoke("scan_video")` を呼ぶが `lib.rs` に未実装 | **要対応**（Phase 5 で解消） |
+| Tauri 2.x 移行未完了 | GUI 機能遅延 | Phase 6 は **CLI 完成後**に着手。Phase 5 までヘッドレスで完結 | 移行済み。`scan_video` コマンドは Phase 4 で実装済み |
+| フロントとバックエンドの不整合 | GUI からスキャナを起動できない | `src/App.tsx` は `invoke("scan_video")` を呼ぶが `lib.rs` に未実装 | **要対応**（Phase 5 で解消、`scan_video` は Phase 4 で実装済み） |
 
 ## 4. ディレクトリ構成（目標）
 

@@ -24,6 +24,8 @@ add_library(st6_scanner SHARED
     calibration.cpp
     raster_normalizer.cpp
     input_tracker.cpp
+    gauge.cpp
+    frame_meter.cpp
 )
 
 # Configuring Include Directories

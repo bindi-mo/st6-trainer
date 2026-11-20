@@ -2,12 +2,15 @@
 #include "calibration.h"
 #include "raster_normalizer.h"
 #include "input_tracker.h"
+#include "gauge.h"
+#include "frame_meter.h"
 #include <opencv2/core.hpp>
 #include <opencv2/videoio.hpp>
 #include <opencv2/imgproc.hpp>
 #include <string>
 #include <cstring>
 #include <ctime>
+#include <cmath>
 #include <iostream>
 #include <sstream>
 #include <memory>
@@ -72,6 +75,14 @@ struct ScannerImpl
     bool input_tracker_initialized;
     int input_frame_counter; // 入力イベント用フレームカウンタ
 
+    // Gauge detector (Phase 4)
+    unique_ptr<GaugeDetector> gauge_detector;
+    bool gauge_detector_initialized;
+
+    // Frame meter detector (Phase 4)
+    unique_ptr<FrameMeterDetector> frame_meter_detector;
+    bool frame_meter_detector_initialized;
+
     // Metadata
     bool metadata_emitted;
     MatchMetadata metadata;
@@ -84,7 +95,9 @@ struct ScannerImpl
                     calibration_done(false), top_y_offset_px(0), bottom_y_offset_px(0),
                     upper_confidence(0.0), lower_confidence(0.0),
                     metadata_emitted(false), has_first_frame(false),
-                    input_tracker_initialized(false), input_frame_counter(0) {}
+                    input_tracker_initialized(false), input_frame_counter(0),
+                    gauge_detector_initialized(false),
+                    frame_meter_detector_initialized(false) {}
 
     ~ScannerImpl()
     {
@@ -363,7 +376,7 @@ extern "C"
 
     SCANNER_API ScannerVersion scanner_api_version()
     {
-        return {0, 3, 0}; // Phase 3
+        return {0, 4, 0}; // Phase 4
     }
 
     SCANNER_API const char *scanner_get_last_error()
@@ -480,7 +493,39 @@ extern "C"
                 cout << "[Scanner] Input tracker initialized" << endl;
             }
 
-            // Attack property locale (stub for now - Phase 4+)
+            // Initialize gauge detector (Phase 4)
+            if (!impl->gauge_detector_initialized)
+            {
+                impl->gauge_detector = make_unique<GaugeDetector>();
+                GaugeConfig gc;
+                gc.hp_hsv_min = Scalar(40, 50, 50);
+                gc.hp_hsv_max = Scalar(90, 255, 255);
+                gc.drive_hsv_min = Scalar(15, 100, 100);
+                gc.drive_hsv_max = Scalar(35, 255, 255);
+                gc.sa_hsv_min = Scalar(100, 50, 50);
+                gc.sa_hsv_max = Scalar(130, 255, 255);
+                gc.occluded_threshold = impl->config.gauge_occluded_threshold;
+                gc.min_confidence = 0.5;
+                impl->gauge_detector->set_config(gc);
+                impl->gauge_detector_initialized = true;
+                cout << "[Scanner] Gauge detector initialized" << endl;
+            }
+
+            // Initialize frame meter detector (Phase 4)
+            if (!impl->frame_meter_detector_initialized)
+            {
+                impl->frame_meter_detector = make_unique<FrameMeterDetector>();
+                FrameMeterConfig fmc;
+                fmc.latch_frames = impl->config.fm_latch_frames;
+                fmc.threshold = impl->config.threshold_frame_meter;
+                fmc.roi_y_start = static_cast<int>(impl->config.canonical_height * 0.70);
+                fmc.roi_y_end = impl->config.canonical_height;
+                impl->frame_meter_detector->set_config(fmc);
+                impl->frame_meter_detector_initialized = true;
+                cout << "[Scanner] Frame meter detector initialized" << endl;
+            }
+
+            // Attack property locale (Phase 4)
             snprintf(out->attack_property_locale, sizeof(out->attack_property_locale), "en");
 
             // Timestamp
@@ -561,7 +606,7 @@ extern "C"
                 return -1;
             }
 
-            // Fill telemetry (stub for now - Phase 4+)
+            // Fill telemetry with real gauge detection (Phase 4)
             memset(out, 0, sizeof(FrameTelemetry));
             out->frame_index = impl->current_frame;
             out->source_frame_index = impl->current_frame;
@@ -569,17 +614,62 @@ extern "C"
             out->round_index = 1;
             out->hp_reset = 0;
 
-            // Stub values (Phase 4 will implement actual gauge detection)
-            out->hp_p1 = 1.0;
-            out->drive_p1 = 6.0;
-            out->sa_p1 = 3;
-            out->in_burnout_p1 = 0;
-            out->hp_p2 = 1.0;
-            out->drive_p2 = 6.0;
-            out->sa_p2 = 3;
-            out->in_burnout_p2 = 0;
+            // Gauge detection (Phase 4)
+            if (impl->gauge_detector && impl->gauge_detector_initialized)
+            {
+                int upper_y_start = 0;
+                int upper_y_end = static_cast<int>(impl->config.canonical_height * 0.25);
+                int lower_y_start = static_cast<int>(impl->config.canonical_height * 0.70);
+                int lower_y_end = static_cast<int>(impl->config.canonical_height);
 
-            out->quality_flags_count = 0;
+                FrameGauges gauges = impl->gauge_detector->detect(norm_result.normalized_frame, upper_y_start, upper_y_end, lower_y_start, lower_y_end);
+
+                out->hp_p1 = gauges.hp_p1.value;
+                out->drive_p1 = gauges.drive_p1.value * 6.0; // Drive ゲージは 0-6 段階
+                out->sa_p1 = static_cast<int>(std::round(gauges.sa_p1.value * 3.0)); // SA は 0-3 段階
+                out->in_burnout_p1 = gauges.in_burnout_p1 ? 1 : 0;
+
+                out->hp_p2 = gauges.hp_p2.value;
+                out->drive_p2 = gauges.drive_p2.value * 6.0;
+                out->sa_p2 = static_cast<int>(std::round(gauges.sa_p2.value * 3.0));
+                out->in_burnout_p2 = gauges.in_burnout_p2 ? 1 : 0;
+
+                // Quality flags for occluded gauges
+                if (gauges.hp_p1.occluded)
+                {
+                    snprintf(out->quality_flags[out->quality_flags_count], sizeof(out->quality_flags[0]), "HP_P1_OCCLUDED");
+                    out->quality_flags_count++;
+                }
+                if (gauges.hp_p2.occluded)
+                {
+                    snprintf(out->quality_flags[out->quality_flags_count], sizeof(out->quality_flags[0]), "HP_P2_OCCLUDED");
+                    out->quality_flags_count++;
+                }
+                if (gauges.sa_p1.occluded)
+                {
+                    snprintf(out->quality_flags[out->quality_flags_count], sizeof(out->quality_flags[0]), "SA_P1_OCCLUDED");
+                    out->quality_flags_count++;
+                }
+                if (gauges.sa_p2.occluded)
+                {
+                    snprintf(out->quality_flags[out->quality_flags_count], sizeof(out->quality_flags[0]), "SA_P2_OCCLUDED");
+                    out->quality_flags_count++;
+                }
+            }
+            else
+            {
+                // Fallback stub values if gauge detector not ready
+                out->hp_p1 = 1.0;
+                out->drive_p1 = 6.0;
+                out->sa_p1 = 3;
+                out->in_burnout_p1 = 0;
+                out->hp_p2 = 1.0;
+                out->drive_p2 = 6.0;
+                out->sa_p2 = 3;
+                out->in_burnout_p2 = 0;
+            }
+
+            out->quality_flags_count = std::min(out->quality_flags_count, 16);
 
             return 1;
         }
@@ -788,10 +878,118 @@ extern "C"
 
     SCANNER_API int scanner_next_move_event(ScannerHandle handle, MoveEvent *out)
     {
-        (void)handle;
-        (void)out;
-        // Stub: no move events (Phase 4+)
-        return 0;
+        try
+        {
+            if (!handle || !out)
+            {
+                g_last_error = "Invalid handle or output pointer";
+                return -1;
+            }
+            auto *impl = static_cast<ScannerImpl *>(handle);
+
+            // Frame meter detector が初期化されていない場合は未検出
+            if (!impl->frame_meter_detector_initialized || !impl->frame_meter_detector)
+            {
+                return 0; // No move events yet
+            }
+
+            // フレームを読み込む (telemetry と同じストリームを共有)
+            Mat frame;
+            if (!impl->cap.read(frame) || frame.empty())
+            {
+                return 0; // End of video
+            }
+
+            impl->current_frame++;
+
+            // 黒フレームをスキップ
+            cv::Mat gray;
+            if (frame.channels() == 3)
+            {
+                cv::cvtColor(frame, gray, cv::COLOR_BGR2GRAY);
+            }
+            else
+            {
+                gray = frame.clone();
+            }
+
+            double min_val, max_val;
+            cv::minMaxLoc(gray, &min_val, &max_val);
+
+            if (max_val < 10.0)
+            {
+                return 1; // Skip black frame
+            }
+
+            // 正規化
+            NormalizationResult norm_result = impl->normalizer->normalize(frame);
+            if (!norm_result.success)
+            {
+                g_last_error = norm_result.error_code + ": " + norm_result.error_message;
+                cout << "[Scanner] Normalization failed: " << g_last_error << endl;
+                return -1;
+            }
+
+            // フレームメーター検出 (3フレームラッチ)
+            FrameMeterReading fm = impl->frame_meter_detector->detect(norm_result.normalized_frame, impl->current_frame);
+
+            memset(out, 0, sizeof(MoveEvent));
+            out->frame_start = impl->current_frame;
+            out->frame_end = impl->current_frame;
+            out->round_index = 1;
+
+            if (fm.detected)
+            {
+                out->fm_startup_p1 = fm.startup_frames;
+                out->fm_total_p1 = fm.startup_frames + fm.active_frames + fm.recovery_frames;
+                out->fm_advantage_p1 = fm.advantage;
+                out->fm_startup_p2 = fm.startup_frames;
+                out->fm_total_p2 = fm.startup_frames + fm.active_frames + fm.recovery_frames;
+                out->fm_advantage_p2 = fm.advantage;
+                out->damage_p1 = 0;
+                out->combo_damage_p1 = 0;
+                out->damage_p2 = 0;
+                out->combo_damage_p2 = 0;
+                snprintf(out->attack_property_p1, sizeof(out->attack_property_p1), "");
+                snprintf(out->attack_property_p2, sizeof(out->attack_property_p2), "");
+                snprintf(out->attack_property_locale, sizeof(out->attack_property_locale), "en");
+                out->conf = fm.confidence;
+            }
+            else
+            {
+                // 未検出: デフォルト値
+                out->fm_startup_p1 = 0;
+                out->fm_total_p1 = 0;
+                out->fm_advantage_p1 = 0;
+                out->fm_startup_p2 = 0;
+                out->fm_total_p2 = 0;
+                out->fm_advantage_p2 = 0;
+                out->damage_p1 = 0;
+                out->combo_damage_p1 = 0;
+                out->damage_p2 = 0;
+                out->combo_damage_p2 = 0;
+                snprintf(out->attack_property_p1, sizeof(out->attack_property_p1), "");
+                snprintf(out->attack_property_p2, sizeof(out->attack_property_p2), "");
+                snprintf(out->attack_property_locale, sizeof(out->attack_property_locale), "en");
+                out->conf = 0.0;
+            }
+
+            out->quality_flags_count = 0;
+
+            return fm.detected ? 1 : 1; // 継続してイテレーション
+        }
+        catch (const std::exception &e)
+        {
+            g_last_error = std::string("Exception in scanner_next_move_event: ") + e.what();
+            cout << "[Scanner] Exception: " << g_last_error << endl;
+            return -1;
+        }
+        catch (...)
+        {
+            g_last_error = "Unknown exception in scanner_next_move_event";
+            cout << "[Scanner] Unknown exception" << endl;
+            return -1;
+        }
     }
 
     SCANNER_API void scanner_destroy(ScannerHandle handle)
