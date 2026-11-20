@@ -4,7 +4,6 @@ pub mod config;
 pub mod commands;
 pub mod pipeline;
 pub mod scanner_ffi;
-// pub mod video_types;  // TODO: re-add when needed
 
 #[tauri::command]
 fn greet(name: &str) -> String {

@@ -3,6 +3,7 @@
 //! Reads scanner output (FrameTelemetry, InputEvent, MoveEvent) as JSONL,
 //! validates invariants per §7.5, and writes to a SQLite database.
 
+use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::fs;
@@ -20,23 +21,55 @@ pub struct InvariantResult {
 pub struct JsonlInputEvent {
     pub frame_start: i32,
     pub frame_end: i32,
+    #[serde(default)]
+    pub frame_span_video: i32,
+    #[serde(default)]
+    pub hold_frames: i32,
+    #[serde(default)]
+    pub counter_clipped: i32,
+    #[serde(default)]
+    pub hold_frames_lower_bound: i32,
+    #[serde(default)]
+    pub time_dilation_suspected: i32,
+    #[serde(default)]
+    pub resync_used: i32,
+    #[serde(default)]
+    pub unknown_glyph: i32,
+    #[serde(default)]
+    pub is_preround: i32,
     pub player: String,
     pub round_index: i32,
     pub event_index: i32,
     pub directions: Vec<String>,
     pub buttons: Vec<String>,
+    #[serde(default)]
+    pub quality_flags: Vec<String>,
 }
 
 /// Frame telemetry record (from scanner JSONL)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JsonlFrameTelemetry {
     pub frame_index: i32,
+    #[serde(default)]
+    pub source_frame_index: i32,
+    #[serde(default)]
+    pub timestamp_ms: i64,
+    #[serde(default)]
+    pub round_index: i32,
+    #[serde(default)]
+    pub hp_reset: i32,
     pub hp_p1: f64,
     pub hp_p2: f64,
     pub drive_p1: f64,
     pub drive_p2: f64,
     pub sa_p1: i32,
     pub sa_p2: i32,
+    #[serde(default)]
+    pub in_burnout_p1: i32,
+    #[serde(default)]
+    pub in_burnout_p2: i32,
+    #[serde(default)]
+    pub quality_flags: Vec<String>,
 }
 
 /// Move event record (from scanner JSONL)
@@ -51,6 +84,24 @@ pub struct JsonlMoveEvent {
     pub fm_startup_p2: i32,
     pub fm_total_p2: i32,
     pub fm_advantage_p2: i32,
+    #[serde(default)]
+    pub damage_p1: i32,
+    #[serde(default)]
+    pub combo_damage_p1: i32,
+    #[serde(default)]
+    pub damage_p2: i32,
+    #[serde(default)]
+    pub combo_damage_p2: i32,
+    #[serde(default)]
+    pub attack_property_p1: String,
+    #[serde(default)]
+    pub attack_property_p2: String,
+    #[serde(default)]
+    pub attack_property_locale: String,
+    #[serde(default)]
+    pub conf: f64,
+    #[serde(default)]
+    pub quality_flags: Vec<String>,
 }
 
 /// Run the full extraction pipeline: validate invariants and write SQLite.
@@ -222,20 +273,135 @@ fn write_sqlite(
         fs::create_dir_all(parent).map_err(|e| format!("Failed to create dir: {}", e))?;
     }
 
-    // For now, write a JSONL summary file since rusqlite is not a dependency.
-    // In production, add rusqlite to Cargo.toml and write to SQLite.
-    let summary = serde_json::json!({
-        "telemetry_count": telemetry.len(),
-        "input_count": inputs.len(),
-        "move_count": moves.len(),
-    });
+    let conn = Connection::open(db_path).map_err(|e| format!("Failed to open SQLite: {}", e))?;
 
-    let summary_path = db_path.with_extension("summary.json");
-    fs::write(
-        &summary_path,
-        serde_json::to_string_pretty(&summary).unwrap(),
+    // Create tables
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS match_metadata (
+            match_id TEXT PRIMARY KEY,
+            character_name_p1 TEXT,
+            character_name_p2 TEXT,
+            control_type_p1 TEXT,
+            control_type_p2 TEXT,
+            detected_at_frame INTEGER,
+            source_resolution TEXT,
+            source_fps REAL,
+            canonical_raster_w INTEGER,
+            canonical_raster_h INTEGER,
+            top_y_offset_px INTEGER,
+            bottom_y_offset_px INTEGER,
+            offset_snapped INTEGER,
+            manual_verified INTEGER,
+            input_history_available INTEGER,
+            attack_property_locale TEXT,
+            extracted_at_utc TEXT,
+            config_version TEXT,
+            template_pack_version TEXT,
+            extractor_version TEXT
+        );
+        CREATE TABLE IF NOT EXISTS frame_telemetry (
+            frame_index INTEGER,
+            source_frame_index INTEGER,
+            timestamp_ms INTEGER,
+            round_index INTEGER,
+            hp_reset INTEGER,
+            hp_p1 REAL,
+            drive_p1 REAL,
+            sa_p1 INTEGER,
+            in_burnout_p1 INTEGER,
+            hp_p2 REAL,
+            drive_p2 REAL,
+            sa_p2 INTEGER,
+            in_burnout_p2 INTEGER,
+            quality_flags TEXT
+        );
+        CREATE TABLE IF NOT EXISTS input_events (
+            frame_start INTEGER,
+            frame_end INTEGER,
+            frame_span_video INTEGER,
+            hold_frames INTEGER,
+            counter_clipped INTEGER,
+            hold_frames_lower_bound INTEGER,
+            time_dilation_suspected INTEGER,
+            resync_used INTEGER,
+            unknown_glyph INTEGER,
+            is_preround INTEGER,
+            player TEXT,
+            round_index INTEGER,
+            event_index INTEGER,
+            directions TEXT,
+            buttons TEXT,
+            quality_flags TEXT
+        );
+        CREATE TABLE IF NOT EXISTS move_events (
+            frame_start INTEGER,
+            frame_end INTEGER,
+            round_index INTEGER,
+            fm_startup_p1 INTEGER,
+            fm_total_p1 INTEGER,
+            fm_advantage_p1 INTEGER,
+            fm_startup_p2 INTEGER,
+            fm_total_p2 INTEGER,
+            fm_advantage_p2 INTEGER,
+            damage_p1 INTEGER,
+            combo_damage_p1 INTEGER,
+            damage_p2 INTEGER,
+            combo_damage_p2 INTEGER,
+            attack_property_p1 TEXT,
+            attack_property_p2 TEXT,
+            attack_property_locale TEXT,
+            conf REAL,
+            quality_flags TEXT
+        );",
     )
-    .map_err(|e| format!("Failed to write summary: {}", e))?;
+    .map_err(|e| format!("Failed to create tables: {}", e))?;
+
+    // Insert telemetry
+    let mut stmt = conn.prepare(
+        "INSERT INTO frame_telemetry (frame_index, source_frame_index, timestamp_ms, round_index, hp_reset, hp_p1, drive_p1, sa_p1, in_burnout_p1, hp_p2, drive_p2, sa_p2, in_burnout_p2, quality_flags)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+    ).map_err(|e| format!("Failed to prepare telemetry insert: {}", e))?;
+    for t in telemetry {
+        let flags = serde_json::to_string(&t.quality_flags).unwrap_or_default();
+        stmt.execute(params![
+            t.frame_index, t.source_frame_index, t.timestamp_ms, t.round_index, t.hp_reset,
+            t.hp_p1, t.drive_p1, t.sa_p1, t.in_burnout_p1, t.hp_p2, t.drive_p2, t.sa_p2, t.in_burnout_p2, flags
+        ]).map_err(|e| format!("Failed to insert telemetry: {}", e))?;
+    }
+    drop(stmt);
+
+    // Insert input events
+    let mut stmt = conn.prepare(
+        "INSERT INTO input_events (frame_start, frame_end, frame_span_video, hold_frames, counter_clipped, hold_frames_lower_bound, time_dilation_suspected, resync_used, unknown_glyph, is_preround, player, round_index, event_index, directions, buttons, quality_flags)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+    ).map_err(|e| format!("Failed to prepare input insert: {}", e))?;
+    for e in inputs {
+        let dirs = serde_json::to_string(&e.directions).unwrap_or_default();
+        let btns = serde_json::to_string(&e.buttons).unwrap_or_default();
+        let flags = serde_json::to_string(&e.quality_flags).unwrap_or_default();
+        stmt.execute(params![
+            e.frame_start, e.frame_end, e.frame_span_video, e.hold_frames, e.counter_clipped,
+            e.hold_frames_lower_bound, e.time_dilation_suspected, e.resync_used, e.unknown_glyph,
+            e.is_preround, e.player, e.round_index, e.event_index, dirs, btns, flags
+        ]).map_err(|e| format!("Failed to insert input event: {}", e))?;
+    }
+    drop(stmt);
+
+    // Insert move events
+    let mut stmt = conn.prepare(
+        "INSERT INTO move_events (frame_start, frame_end, round_index, fm_startup_p1, fm_total_p1, fm_advantage_p1, fm_startup_p2, fm_total_p2, fm_advantage_p2, damage_p1, combo_damage_p1, damage_p2, combo_damage_p2, attack_property_p1, attack_property_p2, attack_property_locale, conf, quality_flags)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
+    ).map_err(|e| format!("Failed to prepare move insert: {}", e))?;
+    for m in moves {
+        let flags = serde_json::to_string(&m.quality_flags).unwrap_or_default();
+        stmt.execute(params![
+            m.frame_start, m.frame_end, m.round_index, m.fm_startup_p1, m.fm_total_p1, m.fm_advantage_p1,
+            m.fm_startup_p2, m.fm_total_p2, m.fm_advantage_p2, m.damage_p1, m.combo_damage_p1,
+            m.damage_p2, m.combo_damage_p2, m.attack_property_p1, m.attack_property_p2,
+            m.attack_property_locale, m.conf, flags
+        ]).map_err(|e| format!("Failed to insert move event: {}", e))?;
+    }
+    drop(stmt);
 
     Ok(())
 }
@@ -249,11 +415,20 @@ mod tests {
         let inputs = vec![JsonlInputEvent {
             frame_start: 10,
             frame_end: 5,
+            frame_span_video: 0,
+            hold_frames: 0,
+            counter_clipped: 0,
+            hold_frames_lower_bound: 0,
+            time_dilation_suspected: 0,
+            resync_used: 0,
+            unknown_glyph: 0,
+            is_preround: 0,
             player: "P1".to_string(),
             round_index: 1,
             event_index: 0,
             directions: vec!["6".to_string()],
             buttons: vec![],
+            quality_flags: vec![],
         }];
         let mut violations = Vec::new();
         check_input_invariants(&inputs, &mut violations);
@@ -266,11 +441,20 @@ mod tests {
         let inputs = vec![JsonlInputEvent {
             frame_start: 0,
             frame_end: 5,
+            frame_span_video: 0,
+            hold_frames: 0,
+            counter_clipped: 0,
+            hold_frames_lower_bound: 0,
+            time_dilation_suspected: 0,
+            resync_used: 0,
+            unknown_glyph: 0,
+            is_preround: 0,
             player: "P1".to_string(),
             round_index: 1,
             event_index: 0,
             directions: vec![],
             buttons: vec![],
+            quality_flags: vec![],
         }];
         let mut violations = Vec::new();
         check_input_invariants(&inputs, &mut violations);
@@ -281,12 +465,19 @@ mod tests {
     fn test_schema_invariant_hp_range() {
         let telemetry = vec![JsonlFrameTelemetry {
             frame_index: 0,
+            source_frame_index: 0,
+            timestamp_ms: 0,
+            round_index: 1,
+            hp_reset: 0,
             hp_p1: 1.5,
             hp_p2: 1.0,
             drive_p1: 6.0,
             drive_p2: 6.0,
             sa_p1: 3,
             sa_p2: 3,
+            in_burnout_p1: 0,
+            in_burnout_p2: 0,
+            quality_flags: vec![],
         }];
         let inputs = Vec::new();
         let moves = Vec::new();
@@ -300,12 +491,19 @@ mod tests {
     fn test_schema_invariant_sa_range() {
         let telemetry = vec![JsonlFrameTelemetry {
             frame_index: 0,
+            source_frame_index: 0,
+            timestamp_ms: 0,
+            round_index: 1,
+            hp_reset: 0,
             hp_p1: 1.0,
             hp_p2: 1.0,
             drive_p1: 6.0,
             drive_p2: 6.0,
             sa_p1: 4,
             sa_p2: 3,
+            in_burnout_p1: 0,
+            in_burnout_p2: 0,
+            quality_flags: vec![],
         }];
         let inputs = Vec::new();
         let moves = Vec::new();

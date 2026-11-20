@@ -5,7 +5,7 @@
 ### 0.1 ビルド系
 - C++ スキャナー: `scanner-cpp/` (CMake/MSVC → `st6_scanner.dll`)
 - アプリ本体: `src-tauri/` (Cargo/Tauri 2.x)
-- 言語境界: C++ (OpenCV 画像処理) ⇄ Rust (Tauri/CLI/出力) は `scanner_api.h` で固定
+- 言語境界: C++ (OpenCV 画像処理) ⇄ Rust (Tauri/出力) は `scanner_api.h` で固定
 
 ### 0.2 現状の資産（2026-11 時点の実測）
 
@@ -45,7 +45,7 @@
 | **2** | ラスタ正規化・キャリブレーション | `scanner.cpp`: 正規化(§6.1)、アンカーY探索・コンセンサス(§2)、fail-closed | `st6_scanner.dll` (v1) | Phase 0, 1 | **完了**（簡易方式・§2.5 参照） |
 | **3** | 入力履歴追跡 | 19行スロット・slot0読み・シグネチャ/カウンター状態マシン(§4) | `input_events` 出力対応 | Phase 2 | **完了**（ビルド成功） |
 | **4** | ゲージ・フレームメーター | HSVゲージ(§3.2, §5)、2ROIグループ・3フレームラッチ・攻撃属性(§3.3) | `frame_telemetry`, `move_events` | Phase 2 | **完了** |
-| **5** | Rust FFI・出力パイプライン | `scanner_ffi.rs` 拡充、中間JSONL→SQLite 変換、インバリアントチェック | `sf6-extract` CLI / Tauri コマンド | Phase 2–4 | 30% |
+| **5** | Rust FFI・出力パイプライン | `scanner_ffi.rs` 拡充、中間JSONL→SQLite 変換、インバリアントチェック | Tauri コマンド | Phase 2–4 | **完了** |
 | **6** | 手動キャリブレーション UI | Tauri フロントエンド: 候補オフセット表示・±1pxステッパー・`manual_verified` フラグ(§2.7) | `sf6-gui` 機能 | Phase 1, 5 | 未着手 |
 | **7** | 統合・検証・リリース | 検証用リプレイでの E2E、§7.5 インバリアント違反ゼロ確認、エラーコード発火テスト | リリースビルド、テストレポート | Phase 0–6 | 未着手 |
 
@@ -256,15 +256,53 @@ Phase 4 は「ゲージ・フレームメーター」を実装した。HSV 色�
 | `src-tauri/src/commands.rs` | Tauri コマンド `scan_video`（動画スキャン実行）、`scanner_version`（API バージョン取得） |
 | `src-tauri/src/lib.rs` | `commands`, `pipeline` モジュール登録、コマンドハンドラ追加 |
 
-### 2C.7 既知の制約・Phase 5 への申し送り
+### 2C.7 既知の制約・Phase 5 への申し送り — **Phase 5 完了**
+
+| 項目 | 現状 | 対応 |
+|------|------|------|
+| Y オフセット | 0 固定（暫定） | **Phase 5 で実ゲージ位置から確定**（`detect_y_offsets()`） |
+| ラウンド検出 | 未実装 | **Phase 5 で HP リセットから検出**（`scanner_next_telemetry()`） |
+| キャラ名 | 空文字（スタブ） | **Phase 5 で `names/` テンプレートからマッチング** |
+| フレームメーター数字読み取り | 簡易実装（未検出扱い） | Phase 5 でテンプレートマッチング精緻化（未対応、Phase 6 へ持ち越し） |
+| SQLite 書き込み | rusqlite 未導入のため JSONL サマリファイル出力 | **Phase 5 で rusqlite 追加と本格 SQLite 書き込み** |
+
+## 2D. Phase 5 — **完了**
+
+Phase 5 は「Rust FFI・出力パイプライン」を完了した。以下は完了内容の記録です。
+
+### 2D.1 C++ スキャナー変更（`scanner.cpp`）
+
+- `scanner_api_version()` を **0.5.0** に更新（Phase 5）
+- **Y オフセット検出**（`detect_y_offsets()`）: 最初の有効フレームから HSV 色マスクで HP ゲージ（上部）と SA ゲージ（下部）の実際の Y 位置を検出し、`top_y_offset_px` / `bottom_y_offset_px` を設定
+- **キャラクター名検出**（`match_character_name()`）: `src-tauri/templates/names/` のテンプレート（`aki.png`, `alex.png` 等）と `TM_CCOEFF_NORMED` でマッチングし、`character_name_p1` / `character_name_p2` を設定
+- **ラウンド検出**: HP が低値（<0.3）から高値（>0.7）にジャンプしたフレームをラウンドリセットとして検出し、`round_index` をインクリメント、`hp_reset` フラグを設定
+- `opencv2/imgcodecs.hpp` をインクルード（`imread` 用）
+
+### 2D.2 Rust FFI 拡充（`scanner_ffi.rs`）
+
+- `init_scanner()` 共通初期化ロジックを抽出し、`Scanner::new()` で使用
+
+### 2D.3 パイプライン（`pipeline.rs`）
+
+- `rusqlite` 依存を `Cargo.toml` に追加（`bundled` 機能）
+- `write_sqlite()` を実装: `frame_telemetry`, `input_events`, `move_events`, `match_metadata` テーブルを作成し、レコードを挿入
+- `JsonlFrameTelemetry`, `JsonlInputEvent`, `JsonlMoveEvent` 構造体に欠落フィールドを追加し、`#[serde(default)]` で部分デシリアライズに対応
+- JSONL サマリファイル出力から本格 SQLite 書き込みへ移行
+
+### 2D.4 ビルド・テスト
+
+- C++ DLL: `st6_scanner.dll` が正常にビルド成功（C4819 警告のみ、エラーなし）
+- Rust: `cargo build` 成功、`cargo test` 12 件すべて成功
+- `video_types.rs` を削除（未使用・旧型）
+
+### 2D.6 既知の制約・Phase 6 への申し送り
 
 | 項目 | 現状 | 申し送り |
 |------|------|----------|
-| Y オフセット | 0 固定（暫定） | Phase 5 で実ゲージ位置から確定 |
-| ラウンド検出 | 未実装 | Phase 5 で HP リセット/タイマーから検出（§4.5, §7.2） |
-| キャラ名 | 空文字（スタブ） | Phase 5 で実装 |
-| フレームメーター数字読み取り | 簡易実装（未検出扱い） | Phase 5 でテンプレートマッチング精緻化 |
-| SQLite 書き込み | rusqlite 未導入のため JSONL サマリファイル出力 | Phase 5 で rusqlite 追加と本格 SQLite 書き込み |
+| フレームメーター数字読み取り | 簡易実装（未検出扱い） | Phase 6 でテンプレートマッチング精緻化 |
+| キャラ名マッチング | `names/` に `aki.png`, `alex.png` のみ | 他キャラテンプレートの追加が必要 |
+| 操作系判定 | 空文字（スタブ） | Phase 6 で実装 |
+| 手動キャリブレーション UI | 未実装 | Phase 6 で Tauri フロントエンド実装 |
 
 ## 3. リスクと対策（リポジトリ固有）
 
@@ -275,7 +313,7 @@ Phase 4 は「ゲージ・フレームメーター」を実装した。HSV 色�
 | C++ / Rust 境界で ABI 不整合 | クラッシュ・メモリリーク | `scanner_api.h` を **C 互換 POD のみ**に制限。`std::string` 等禁止。所有権は呼び出し側 | 準拠済み |
 | OpenCV 版違い (4.12.0 固定) | ビルド失敗・挙動差 | `scanner-cpp/opencv-build/` を**ベンダリング継続**。CMake で `find_package` せずローカル参照 | 準拠済み |
 | 検証動画の不足 | 受け入れテスト不可 | `src-tauri/videos/replay_00.mkv` を継続利用。不足時は合成動画で補完 | **解消済み**（1 本所有） |
-| Tauri 2.x 移行未完了 | GUI 機能遅延 | Phase 6 は **CLI 完成後**に着手。Phase 5 までヘッドレスで完結 | 移行済み。`scan_video` コマンドは Phase 4 で実装済み |
+| Tauri 2.x 移行未完了 | GUI 機能遅延 | Phase 6 で着手 | 移行済み。`scan_video` コマンドは Phase 4 で実装済み |
 | フロントとバックエンドの不整合 | GUI からスキャナを起動できない | `src/App.tsx` は `invoke("scan_video")` を呼ぶが `lib.rs` に未実装 | **要対応**（Phase 5 で解消、`scan_video` は Phase 4 で実装済み） |
 
 ## 4. ディレクトリ構成（目標）

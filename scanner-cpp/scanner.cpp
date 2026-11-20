@@ -7,6 +7,7 @@
 #include <opencv2/core.hpp>
 #include <opencv2/videoio.hpp>
 #include <opencv2/imgproc.hpp>
+#include <opencv2/imgcodecs.hpp>
 #include <string>
 #include <cstring>
 #include <ctime>
@@ -14,6 +15,8 @@
 #include <iostream>
 #include <sstream>
 #include <memory>
+#include <algorithm>
+#include <filesystem>
 
 using namespace cv;
 using namespace std;
@@ -46,6 +49,13 @@ struct ScannerConfig
     string config_version = "cfg-1.0";
     string template_pack_version = "sf6-ui-2026.11";
     string extractor_version = "0.1.0";
+};
+
+// Character name template entry
+struct CharNameTemplate
+{
+    string name;
+    Mat template_img;
 };
 
 // Internal scanner state
@@ -91,13 +101,27 @@ struct ScannerImpl
     Mat first_frame;
     bool has_first_frame;
 
+    // Character name templates (Phase 5)
+    vector<CharNameTemplate> char_templates;
+    bool char_templates_loaded;
+
+    // Round detection state (Phase 5)
+    double prev_hp_p1;
+    double prev_hp_p2;
+    int round_index;
+    bool round_initialized;
+
     ScannerImpl() : fps(0), total_frames(0), current_frame(0),
                     calibration_done(false), top_y_offset_px(0), bottom_y_offset_px(0),
                     upper_confidence(0.0), lower_confidence(0.0),
                     metadata_emitted(false), has_first_frame(false),
                     input_tracker_initialized(false), input_frame_counter(0),
                     gauge_detector_initialized(false),
-                    frame_meter_detector_initialized(false) {}
+                    frame_meter_detector_initialized(false),
+                    char_templates_loaded(false),
+                    prev_hp_p1(1.0), prev_hp_p2(1.0),
+                    round_index(1),
+                    round_initialized(false) {}
 
     ~ScannerImpl()
     {
@@ -217,6 +241,166 @@ struct ScannerImpl
              << " fps=" << config.fps << endl;
     }
 
+    // Load character name templates from names/ directory (Phase 5)
+    void load_char_name_templates()
+    {
+        if (char_templates_loaded)
+            return;
+
+        namespace fs = std::filesystem;
+        fs::path names_dir = fs::path(template_pack_path) / "names";
+        if (!fs::exists(names_dir))
+        {
+            cout << "[Scanner] Character names directory not found: " << names_dir << endl;
+            char_templates_loaded = true;
+            return;
+        }
+
+        for (const auto &entry : fs::directory_iterator(names_dir))
+        {
+            if (entry.path().extension() == ".png")
+            {
+                Mat tmpl = imread(entry.path().string(), IMREAD_COLOR);
+                if (!tmpl.empty())
+                {
+                    CharNameTemplate ctmpl;
+                    ctmpl.name = entry.path().stem().string();
+                    ctmpl.template_img = tmpl;
+                    char_templates.push_back(move(ctmpl));
+                    cout << "[Scanner] Loaded char template: " << ctmpl.name << endl;
+                }
+            }
+        }
+
+        char_templates_loaded = true;
+        cout << "[Scanner] Loaded " << char_templates.size() << " character name templates" << endl;
+    }
+
+    // Match character name against templates (Phase 5)
+    string match_character_name(const Mat &frame, int x_start, int x_end, int y_start, int y_end)
+    {
+        if (char_templates.empty())
+            return "";
+
+        Mat roi = frame.rowRange(y_start, y_end).colRange(x_start, x_end);
+        if (roi.empty())
+            return "";
+
+        Mat gray_roi;
+        if (roi.channels() == 3)
+            cvtColor(roi, gray_roi, COLOR_BGR2GRAY);
+        else
+            gray_roi = roi.clone();
+
+        string best_name;
+        double best_conf = 0.0;
+
+        for (const auto &ctmpl : char_templates)
+        {
+            Mat gray_tmpl;
+            if (ctmpl.template_img.channels() == 3)
+                cvtColor(ctmpl.template_img, gray_tmpl, COLOR_BGR2GRAY);
+            else
+                gray_tmpl = ctmpl.template_img.clone();
+
+            // Resize template to match ROI height
+            double scale = static_cast<double>(gray_roi.rows) / static_cast<double>(gray_tmpl.rows);
+            Mat resized_tmpl;
+            resize(gray_tmpl, resized_tmpl, Size(), scale, scale, INTER_AREA);
+
+            if (resized_tmpl.cols > gray_roi.cols || resized_tmpl.rows > gray_roi.rows)
+                continue;
+
+            Mat result;
+            matchTemplate(gray_roi, resized_tmpl, result, TM_CCOEFF_NORMED);
+            double min_val, max_val;
+            Point min_loc, max_loc;
+            minMaxLoc(result, &min_val, &max_val, &min_loc, &max_loc);
+
+            if (max_val > best_conf && max_val > 0.80)
+            {
+                best_conf = max_val;
+                best_name = ctmpl.name;
+            }
+        }
+
+        return best_name;
+    }
+
+    // Detect Y offsets from real gauge positions (Phase 5)
+    // Scans the first valid frame to find the actual Y positions of HP and SA gauges
+    void detect_y_offsets(const Mat &frame)
+    {
+        Mat hsv;
+        if (frame.channels() == 3)
+            cvtColor(frame, hsv, COLOR_BGR2HSV);
+        else
+            return;
+
+        // Scan upper band for HP gauge (green/yellow)
+        Mat upper_roi = hsv.rowRange(0, static_cast<int>(hsv.rows * 0.25));
+        Mat hp_mask;
+        inRange(upper_roi, Scalar(40, 50, 50), Scalar(90, 255, 255), hp_mask);
+
+        // Find rows with significant HP color
+        int hp_top = -1, hp_bottom = -1;
+        for (int y = 0; y < hp_mask.rows; y++)
+        {
+            double row_mean = mean(hp_mask.row(y))[0] / 255.0;
+            if (row_mean > 0.01)
+            {
+                if (hp_top == -1)
+                    hp_top = y;
+                hp_bottom = y;
+            }
+        }
+
+        // Scan lower band for SA gauge (blue)
+        int lower_start = static_cast<int>(hsv.rows * 0.70);
+        Mat lower_roi = hsv.rowRange(lower_start, hsv.rows);
+        Mat sa_mask;
+        inRange(lower_roi, Scalar(100, 50, 50), Scalar(130, 255, 255), sa_mask);
+
+        int sa_top = -1, sa_bottom = -1;
+        for (int y = 0; y < sa_mask.rows; y++)
+        {
+            double row_mean = mean(sa_mask.row(y))[0] / 255.0;
+            if (row_mean > 0.01)
+            {
+                if (sa_top == -1)
+                    sa_top = y;
+                sa_bottom = y;
+            }
+        }
+
+        // Set Y offsets based on detected gauge positions
+        if (hp_top != -1)
+        {
+            top_y_offset_px = hp_top;
+            upper_confidence = 0.9;
+        }
+        else
+        {
+            top_y_offset_px = 0;
+            upper_confidence = 0.5;
+        }
+
+        if (sa_top != -1)
+        {
+            bottom_y_offset_px = lower_start + sa_top;
+            lower_confidence = 0.9;
+        }
+        else
+        {
+            bottom_y_offset_px = lower_start;
+            lower_confidence = 0.5;
+        }
+
+        cout << "[Scanner] Y offset detection: top_y=" << top_y_offset_px
+             << " bottom_y=" << bottom_y_offset_px
+             << " (upper_conf=" << upper_confidence << ", lower_conf=" << lower_confidence << ")" << endl;
+    }
+
     // Perform calibration on first frame
     bool perform_calibration()
     {
@@ -317,38 +501,19 @@ struct ScannerImpl
         }
 
         // Detect HP gauge (typically green/yellow in upper portion)
-        // HP gauge is usually in the upper 25% of the screen
         cv::Mat hp_region = hsv.rowRange(0, static_cast<int>(hsv.rows * 0.25));
-
-        // Green HP (hue ~60-180 in OpenCV HSV)
         cv::Mat hp_mask;
         cv::inRange(hp_region, cv::Scalar(40, 50, 50), cv::Scalar(180, 255, 255), hp_mask);
-
         double hp_mean = cv::mean(hp_mask)[0] / 255.0;
 
         // Detect SA gauge (typically blue in lower portion)
-        // SA gauge is usually in the lower 30% of the screen
         cv::Mat sa_region = hsv.rowRange(static_cast<int>(hsv.rows * 0.70), hsv.rows);
-
-        // Blue SA (hue ~100-130 in OpenCV HSV)
         cv::Mat sa_mask;
         cv::inRange(sa_region, cv::Scalar(100, 50, 50), cv::Scalar(130, 255, 255), sa_mask);
-
         double sa_mean = cv::mean(sa_mask)[0] / 255.0;
 
         cout << "[Scanner] HUD detection: hp_region_mean=" << hp_mean
              << " sa_region_mean=" << sa_mean << endl;
-
-        // Simplified Y offset estimation
-        // Upper HUD: assume it's at the top of the HP region
-        // Lower HUD: assume it's at the top of the SA region
-
-        // For now, use default offsets (0 for upper, 0 for lower)
-        // Phase 3-4 will refine these based on actual gauge detection
-        top_y_offset_px = 0;
-        bottom_y_offset_px = 0;
-        upper_confidence = 0.8; // Moderate confidence
-        lower_confidence = 0.8;
 
         // Check if HUD is present
         if (hp_mean < 0.01 && sa_mean < 0.01)
@@ -357,6 +522,12 @@ struct ScannerImpl
             cout << "[Scanner] Error: " << g_last_error << endl;
             return false;
         }
+
+        // Phase 5: Detect Y offsets from real gauge positions
+        detect_y_offsets(first_frame);
+
+        // Phase 5: Load character name templates
+        load_char_name_templates();
 
         calibration_done = true;
         cout << "[Scanner] Simplified calibration complete: top_y=" << top_y_offset_px
@@ -376,7 +547,7 @@ extern "C"
 
     SCANNER_API ScannerVersion scanner_api_version()
     {
-        return {0, 4, 0}; // Phase 4
+        return {0, 5, 0}; // Phase 5
     }
 
     SCANNER_API const char *scanner_get_last_error()
@@ -454,9 +625,17 @@ extern "C"
             snprintf(out->match_id, sizeof(out->match_id), "match-%d-%d",
                      impl->top_y_offset_px, impl->bottom_y_offset_px);
 
-            // Character names (stub for now - Phase 3+)
-            snprintf(out->character_name_p1, sizeof(out->character_name_p1), "");
-            snprintf(out->character_name_p2, sizeof(out->character_name_p2), "");
+            // Character names (Phase 5: detected from names/ templates)
+            // Character name regions: upper HUD, left side for P1, right side for P2
+            int char_name_y_start = static_cast<int>(impl->config.canonical_height * 0.15);
+            int char_name_y_end = static_cast<int>(impl->config.canonical_height * 0.22);
+            int char_name_x_mid = impl->config.canonical_width / 2;
+
+            string char_p1 = impl->match_character_name(impl->first_frame, 0, char_name_x_mid, char_name_y_start, char_name_y_end);
+            string char_p2 = impl->match_character_name(impl->first_frame, char_name_x_mid, impl->config.canonical_width, char_name_y_start, char_name_y_end);
+
+            snprintf(out->character_name_p1, sizeof(out->character_name_p1), "%s", char_p1.c_str());
+            snprintf(out->character_name_p2, sizeof(out->character_name_p2), "%s", char_p2.c_str());
 
             // Control types (stub for now - Phase 3+)
             snprintf(out->control_type_p1, sizeof(out->control_type_p1), "");
@@ -611,10 +790,11 @@ extern "C"
             out->frame_index = impl->current_frame;
             out->source_frame_index = impl->current_frame;
             out->timestamp_ms = (int64_t)((impl->current_frame / impl->fps) * 1000.0);
-            out->round_index = 1;
+            out->round_index = impl->round_index;
             out->hp_reset = 0;
 
             // Gauge detection (Phase 4)
+            double hp_p1 = 1.0, hp_p2 = 1.0;
             if (impl->gauge_detector && impl->gauge_detector_initialized)
             {
                 int upper_y_start = 0;
@@ -624,12 +804,12 @@ extern "C"
 
                 FrameGauges gauges = impl->gauge_detector->detect(norm_result.normalized_frame, upper_y_start, upper_y_end, lower_y_start, lower_y_end);
 
-                out->hp_p1 = gauges.hp_p1.value;
+                hp_p1 = gauges.hp_p1.value;
                 out->drive_p1 = gauges.drive_p1.value * 6.0; // Drive ゲージは 0-6 段階
                 out->sa_p1 = static_cast<int>(std::round(gauges.sa_p1.value * 3.0)); // SA は 0-3 段階
                 out->in_burnout_p1 = gauges.in_burnout_p1 ? 1 : 0;
 
-                out->hp_p2 = gauges.hp_p2.value;
+                hp_p2 = gauges.hp_p2.value;
                 out->drive_p2 = gauges.drive_p2.value * 6.0;
                 out->sa_p2 = static_cast<int>(std::round(gauges.sa_p2.value * 3.0));
                 out->in_burnout_p2 = gauges.in_burnout_p2 ? 1 : 0;
@@ -659,14 +839,40 @@ extern "C"
             else
             {
                 // Fallback stub values if gauge detector not ready
-                out->hp_p1 = 1.0;
+                hp_p1 = 1.0;
                 out->drive_p1 = 6.0;
                 out->sa_p1 = 3;
                 out->in_burnout_p1 = 0;
-                out->hp_p2 = 1.0;
+                hp_p2 = 1.0;
                 out->drive_p2 = 6.0;
                 out->sa_p2 = 3;
                 out->in_burnout_p2 = 0;
+            }
+
+            out->hp_p1 = hp_p1;
+            out->hp_p2 = hp_p2;
+
+            // Phase 5: Round detection via HP reset
+            if (!impl->round_initialized)
+            {
+                impl->prev_hp_p1 = hp_p1;
+                impl->prev_hp_p2 = hp_p2;
+                impl->round_initialized = true;
+            }
+            else
+            {
+                // Detect HP reset: HP jumps from low to high (round start)
+                bool hp_reset_p1 = (impl->prev_hp_p1 < 0.3 && hp_p1 > 0.7);
+                bool hp_reset_p2 = (impl->prev_hp_p2 < 0.3 && hp_p2 > 0.7);
+                if (hp_reset_p1 || hp_reset_p2)
+                {
+                    impl->round_index++;
+                    out->hp_reset = 1;
+                    cout << "[Scanner] Round reset detected at frame " << impl->current_frame
+                         << " -> round " << impl->round_index << endl;
+                }
+                impl->prev_hp_p1 = hp_p1;
+                impl->prev_hp_p2 = hp_p2;
             }
 
             out->quality_flags_count = std::min(out->quality_flags_count, 16);

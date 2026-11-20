@@ -218,6 +218,27 @@ fn get_dll_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     ))
 }
 
+/// Resolve DLL path without Tauri (for CLI mode)
+fn get_dll_path_plain() -> Result<PathBuf, String> {
+    // Try current directory first
+    let curr = std::env::current_dir().unwrap_or_default();
+    let dll_path = curr.join("st6_scanner.dll");
+    if dll_path.exists() {
+        return Ok(dll_path);
+    }
+    // Fallback: src-tauri/ directory (development)
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let dev_dll = manifest_dir.join("st6_scanner.dll");
+    if dev_dll.exists() {
+        return Ok(dev_dll);
+    }
+    Err(format!(
+        "st6_scanner.dll not found at {} or {}",
+        dll_path.display(),
+        dev_dll.display()
+    ))
+}
+
 /// Resolve template pack path (src-tauri/templates/)
 fn get_template_pack_path() -> PathBuf {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -246,8 +267,107 @@ fn load_scanner_config_json() -> Option<String> {
     }
 }
 
+/// Common initialization logic shared by Tauri and CLI constructors.
+fn init_scanner(
+    dll_path: PathBuf,
+    template_pack_path: PathBuf,
+    video_path: &Path,
+    config: Option<ScanConfig>,
+) -> ScannerResult<Scanner> {
+    eprintln!("[Rust] Scanner::new video_path: {:?}", video_path);
+    eprintln!("[Rust] DLL path: {:?}", dll_path);
+    eprintln!("[Rust] Template pack: {:?}", template_pack_path);
+
+    // Load library and leak it so Symbols can have 'static lifetime.
+    // The DLL remains loaded for the process lifetime.
+    let lib = Box::leak(Box::new(
+        unsafe { Library::new(&dll_path) }.map_err(ScannerError::DllLoad)?,
+    ));
+    eprintln!("[Rust] Library loaded successfully");
+
+    // Load all symbols from library
+    let create: Symbol<
+        unsafe extern "C" fn(*const c_char, *const ScanConfig) -> ScannerHandle,
+    > = unsafe { lib.get(b"scanner_create") }
+        .map_err(|e| ScannerError::SymbolNotFound(format!("scanner_create: {}", e)))?;
+    let get_metadata: Symbol<unsafe extern "C" fn(ScannerHandle, *mut MatchMetadata) -> c_int> =
+        unsafe { lib.get(b"scanner_get_metadata") }
+            .map_err(|e| ScannerError::SymbolNotFound(format!("scanner_get_metadata: {}", e)))?;
+    let next_telemetry: Symbol<
+        unsafe extern "C" fn(ScannerHandle, *mut FrameTelemetry) -> c_int,
+    > = unsafe { lib.get(b"scanner_next_telemetry") }
+        .map_err(|e| ScannerError::SymbolNotFound(format!("scanner_next_telemetry: {}", e)))?;
+    let next_input_event: Symbol<
+        unsafe extern "C" fn(ScannerHandle, *mut InputEvent) -> c_int,
+    > = unsafe { lib.get(b"scanner_next_input_event") }.map_err(|e| {
+        ScannerError::SymbolNotFound(format!("scanner_next_input_event: {}", e))
+    })?;
+    let next_move_event: Symbol<unsafe extern "C" fn(ScannerHandle, *mut MoveEvent) -> c_int> =
+        unsafe { lib.get(b"scanner_next_move_event") }.map_err(|e| {
+            ScannerError::SymbolNotFound(format!("scanner_next_move_event: {}", e))
+        })?;
+    let destroy: Symbol<unsafe extern "C" fn(ScannerHandle)> =
+        unsafe { lib.get(b"scanner_destroy") }
+            .map_err(|e| ScannerError::SymbolNotFound(format!("scanner_destroy: {}", e)))?;
+    let get_last_error: Symbol<unsafe extern "C" fn() -> *const c_char> = unsafe {
+        lib.get(b"scanner_get_last_error")
+    }
+    .map_err(|e| ScannerError::SymbolNotFound(format!("scanner_get_last_error: {}", e)))?;
+    let api_version: Symbol<unsafe extern "C" fn() -> ScannerVersion> =
+        unsafe { lib.get(b"scanner_api_version") }
+            .map_err(|e| ScannerError::SymbolNotFound(format!("scanner_api_version: {}", e)))?;
+
+    // Check API version
+    let version = unsafe { api_version() };
+    eprintln!(
+        "[Rust] Scanner API version: {}.{}.{}",
+        version.major, version.minor, version.patch
+    );
+
+    // Prepare config with template pack path and scanner config JSON.
+    // CStrings are stored in the Scanner so their pointers remain valid
+    // for the lifetime of the Scanner (the DLL may retain them).
+    let mut cfg = config.unwrap_or_default();
+    let template_pack_cstr = CString::new(template_pack_path.to_string_lossy().as_bytes())?;
+    cfg.template_pack_path = template_pack_cstr.as_ptr();
+
+    let config_json_cstr = if cfg.config_json.is_null() {
+        load_scanner_config_json().and_then(|json| {
+            CString::new(json).ok().inspect(|cstr| {
+                cfg.config_json = cstr.as_ptr();
+            })
+        })
+    } else {
+        None
+    };
+
+    let path_cstr = CString::new(video_path.to_string_lossy().as_bytes())?;
+    let handle = unsafe { create(path_cstr.as_ptr(), &cfg) };
+    if handle.is_null() {
+        let err_ptr = unsafe { get_last_error() };
+        let err_msg = if err_ptr.is_null() {
+            "Unknown error".to_string()
+        } else {
+            unsafe { CStr::from_ptr(err_ptr) }.to_str()?.to_string()
+        };
+        return Err(ScannerError::Creation(err_msg));
+    }
+
+    Ok(Scanner {
+        handle,
+        _template_pack_cstr: Some(template_pack_cstr),
+        _config_json_cstr: config_json_cstr,
+        fn_get_metadata: get_metadata,
+        fn_next_telemetry: next_telemetry,
+        fn_next_input_event: next_input_event,
+        fn_next_move_event: next_move_event,
+        fn_destroy: destroy,
+        fn_get_last_error: get_last_error,
+    })
+}
+
 impl Scanner {
-    /// Create a new scanner from video file
+    /// Create a new scanner from video file (Tauri mode)
     pub fn new<P: AsRef<Path>>(
         app: &tauri::AppHandle,
         video_path: P,
@@ -255,97 +375,17 @@ impl Scanner {
     ) -> ScannerResult<Self> {
         let dll_path = get_dll_path(app).map_err(ScannerError::Creation)?;
         let template_pack_path = get_template_pack_path();
+        init_scanner(dll_path, template_pack_path, video_path.as_ref(), config)
+    }
 
-        eprintln!("[Rust] Scanner::new video_path: {:?}", video_path.as_ref());
-        eprintln!("[Rust] DLL path: {:?}", dll_path);
-        eprintln!("[Rust] Template pack: {:?}", template_pack_path);
-
-        // Load library and leak it so Symbols can have 'static lifetime.
-        // The DLL remains loaded for the process lifetime.
-        let lib = Box::leak(Box::new(
-            unsafe { Library::new(&dll_path) }.map_err(ScannerError::DllLoad)?,
-        ));
-        eprintln!("[Rust] Library loaded successfully");
-
-        // Load all symbols from library
-        let create: Symbol<
-            unsafe extern "C" fn(*const c_char, *const ScanConfig) -> ScannerHandle,
-        > = unsafe { lib.get(b"scanner_create") }
-            .map_err(|e| ScannerError::SymbolNotFound(format!("scanner_create: {}", e)))?;
-        let get_metadata: Symbol<unsafe extern "C" fn(ScannerHandle, *mut MatchMetadata) -> c_int> =
-            unsafe { lib.get(b"scanner_get_metadata") }
-                .map_err(|e| ScannerError::SymbolNotFound(format!("scanner_get_metadata: {}", e)))?;
-        let next_telemetry: Symbol<
-            unsafe extern "C" fn(ScannerHandle, *mut FrameTelemetry) -> c_int,
-        > = unsafe { lib.get(b"scanner_next_telemetry") }
-            .map_err(|e| ScannerError::SymbolNotFound(format!("scanner_next_telemetry: {}", e)))?;
-        let next_input_event: Symbol<
-            unsafe extern "C" fn(ScannerHandle, *mut InputEvent) -> c_int,
-        > = unsafe { lib.get(b"scanner_next_input_event") }.map_err(|e| {
-            ScannerError::SymbolNotFound(format!("scanner_next_input_event: {}", e))
-        })?;
-        let next_move_event: Symbol<unsafe extern "C" fn(ScannerHandle, *mut MoveEvent) -> c_int> =
-            unsafe { lib.get(b"scanner_next_move_event") }.map_err(|e| {
-                ScannerError::SymbolNotFound(format!("scanner_next_move_event: {}", e))
-            })?;
-        let destroy: Symbol<unsafe extern "C" fn(ScannerHandle)> =
-            unsafe { lib.get(b"scanner_destroy") }
-                .map_err(|e| ScannerError::SymbolNotFound(format!("scanner_destroy: {}", e)))?;
-        let get_last_error: Symbol<unsafe extern "C" fn() -> *const c_char> = unsafe {
-            lib.get(b"scanner_get_last_error")
-        }
-        .map_err(|e| ScannerError::SymbolNotFound(format!("scanner_get_last_error: {}", e)))?;
-        let api_version: Symbol<unsafe extern "C" fn() -> ScannerVersion> =
-            unsafe { lib.get(b"scanner_api_version") }
-                .map_err(|e| ScannerError::SymbolNotFound(format!("scanner_api_version: {}", e)))?;
-
-        // Check API version
-        let version = unsafe { api_version() };
-        eprintln!(
-            "[Rust] Scanner API version: {}.{}.{}",
-            version.major, version.minor, version.patch
-        );
-
-        // Prepare config with template pack path and scanner config JSON.
-        // CStrings are stored in the Scanner so their pointers remain valid
-        // for the lifetime of the Scanner (the DLL may retain them).
-        let mut cfg = config.unwrap_or_default();
-        let template_pack_cstr = CString::new(template_pack_path.to_string_lossy().as_bytes())?;
-        cfg.template_pack_path = template_pack_cstr.as_ptr();
-
-        let config_json_cstr = if cfg.config_json.is_null() {
-            load_scanner_config_json().and_then(|json| {
-                CString::new(json).ok().inspect(|cstr| {
-                    cfg.config_json = cstr.as_ptr();
-                })
-            })
-        } else {
-            None
-        };
-
-        let path_cstr = CString::new(video_path.as_ref().to_string_lossy().as_bytes())?;
-        let handle = unsafe { create(path_cstr.as_ptr(), &cfg) };
-        if handle.is_null() {
-            let err_ptr = unsafe { get_last_error() };
-            let err_msg = if err_ptr.is_null() {
-                "Unknown error".to_string()
-            } else {
-                unsafe { CStr::from_ptr(err_ptr) }.to_str()?.to_string()
-            };
-            return Err(ScannerError::Creation(err_msg));
-        }
-
-        Ok(Self {
-            handle,
-            _template_pack_cstr: Some(template_pack_cstr),
-            _config_json_cstr: config_json_cstr,
-            fn_get_metadata: get_metadata,
-            fn_next_telemetry: next_telemetry,
-            fn_next_input_event: next_input_event,
-            fn_next_move_event: next_move_event,
-            fn_destroy: destroy,
-            fn_get_last_error: get_last_error,
-        })
+    /// Create a new scanner from video file (CLI mode, no Tauri AppHandle needed)
+    pub fn new_from_path<P: AsRef<Path>>(
+        video_path: P,
+        config: Option<ScanConfig>,
+    ) -> ScannerResult<Self> {
+        let dll_path = get_dll_path_plain().map_err(ScannerError::Creation)?;
+        let template_pack_path = get_template_pack_path();
+        init_scanner(dll_path, template_pack_path, video_path.as_ref(), config)
     }
 
     /// Get match metadata (call once after creation)
