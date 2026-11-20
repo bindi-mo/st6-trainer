@@ -106,7 +106,7 @@ fn parse_jsonl<T: for<'de> Deserialize<'de>>(content: &str) -> Result<Vec<T>, St
 
 /// §7.5 項 1-5: 入力テーブル不変条件チェック
 fn check_input_invariants(inputs: &[JsonlInputEvent], violations: &mut Vec<String>) {
-    let mut seen_keys: HashSet<(i32, String, i32, i32)> = HashSet::new();
+    let mut seen_keys: HashSet<(i32, String, i32)> = HashSet::new();
 
     for input in inputs {
         // 項 1: frame_start <= frame_end
@@ -126,7 +126,7 @@ fn check_input_invariants(inputs: &[JsonlInputEvent], violations: &mut Vec<Strin
         }
 
         // 項 3: 同一 (player, round_index, event_index) の重複禁止
-        let key = (input.round_index, input.player.clone(), input.event_index, input.frame_start);
+        let key = (input.round_index, input.player.clone(), input.event_index);
         if !seen_keys.insert(key.clone()) {
             violations.push(format!(
                 "INPUT_INVARIANT: duplicate key {:?} for {} event {}",
@@ -138,7 +138,9 @@ fn check_input_invariants(inputs: &[JsonlInputEvent], violations: &mut Vec<Strin
         if input.directions.len() > 8 {
             violations.push(format!(
                 "INPUT_INVARIANT: too many directions ({}) for {} event {}",
-                input.directions.len(), input.player, input.event_index
+                input.directions.len(),
+                input.player,
+                input.event_index
             ));
         }
 
@@ -146,7 +148,9 @@ fn check_input_invariants(inputs: &[JsonlInputEvent], violations: &mut Vec<Strin
         if input.buttons.len() > 7 {
             violations.push(format!(
                 "INPUT_INVARIANT: too many buttons ({}) for {} event {}",
-                input.buttons.len(), input.player, input.event_index
+                input.buttons.len(),
+                input.player,
+                input.event_index
             ));
         }
     }
@@ -194,13 +198,13 @@ fn check_schema_invariants(
     // 項 8: フレームインデックスは単調増加
     let mut last_frame: Option<i32> = None;
     for t in telemetry {
-        if let Some(last) = last_frame {
-            if t.frame_index <= last {
-                violations.push(format!(
-                    "SCHEMA_INVARIANT: frame_index {} not monotonically increasing (prev={})",
-                    t.frame_index, last
-                ));
-            }
+        if let Some(last) = last_frame
+            && t.frame_index <= last
+        {
+            violations.push(format!(
+                "SCHEMA_INVARIANT: frame_index {} not monotonically increasing (prev={})",
+                t.frame_index, last
+            ));
         }
         last_frame = Some(t.frame_index);
     }
@@ -227,8 +231,11 @@ fn write_sqlite(
     });
 
     let summary_path = db_path.with_extension("summary.json");
-    fs::write(&summary_path, serde_json::to_string_pretty(&summary).unwrap())
-        .map_err(|e| format!("Failed to write summary: {}", e))?;
+    fs::write(
+        &summary_path,
+        serde_json::to_string_pretty(&summary).unwrap(),
+    )
+    .map_err(|e| format!("Failed to write summary: {}", e))?;
 
     Ok(())
 }
@@ -281,8 +288,8 @@ mod tests {
             sa_p1: 3,
             sa_p2: 3,
         }];
-        let mut inputs = Vec::new();
-        let mut moves = Vec::new();
+        let inputs = Vec::new();
+        let moves = Vec::new();
         let mut violations = Vec::new();
         check_schema_invariants(&telemetry, &inputs, &moves, &mut violations);
         assert!(!violations.is_empty());
@@ -300,8 +307,8 @@ mod tests {
             sa_p1: 4,
             sa_p2: 3,
         }];
-        let mut inputs = Vec::new();
-        let mut moves = Vec::new();
+        let inputs = Vec::new();
+        let moves = Vec::new();
         let mut violations = Vec::new();
         check_schema_invariants(&telemetry, &inputs, &moves, &mut violations);
         assert!(!violations.is_empty());
@@ -323,7 +330,8 @@ mod tests {
         let telemetry = r#"{"frame_index":0,"hp_p1":1.0,"hp_p2":1.0,"drive_p1":6.0,"drive_p2":6.0,"sa_p1":3,"sa_p2":3}"#;
         let inputs = r#"{"frame_start":0,"frame_end":5,"player":"P1","round_index":1,"event_index":0,"directions":["6"],"buttons":[]}"#;
         let moves = r#"{"frame_start":0,"frame_end":10,"round_index":1,"fm_startup_p1":5,"fm_total_p1":15,"fm_advantage_p1":0,"fm_startup_p2":5,"fm_total_p2":15,"fm_advantage_p2":0}"#;
-        let result = run_pipeline(telemetry, inputs, moves, Path::new("/tmp/test_pipeline.db")).unwrap();
+        let result =
+            run_pipeline(telemetry, inputs, moves, Path::new("/tmp/test_pipeline.db")).unwrap();
         assert!(result.passed);
         assert!(result.violations.is_empty());
     }

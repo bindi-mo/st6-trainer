@@ -2,7 +2,7 @@
 //!
 //! Exposes scanner_ffi and pipeline functionality to the frontend.
 
-use crate::pipeline::{run_pipeline, InvariantResult};
+use crate::pipeline::{InvariantResult, run_pipeline};
 use crate::scanner_ffi::{
     FrameTelemetryOut, InputEventOut, MatchMetadataOut, MoveEventOut, Scanner,
 };
@@ -34,11 +34,8 @@ pub async fn scan_video(
 
     // Collect telemetry
     let mut telemetry = Vec::new();
-    loop {
-        match scanner.next_telemetry().map_err(|e| e.to_string())? {
-            Some(t) => telemetry.push(FrameTelemetryOut::from(t)),
-            None => break,
-        }
+    while let Some(t) = scanner.next_telemetry().map_err(|e| e.to_string())? {
+        telemetry.push(FrameTelemetryOut::from(t));
     }
 
     // Re-create scanner for input events (separate stream)
@@ -46,11 +43,8 @@ pub async fn scan_video(
     scanner2.get_metadata().map_err(|e| e.to_string())?;
 
     let mut input_events = Vec::new();
-    loop {
-        match scanner2.next_input_event().map_err(|e| e.to_string())? {
-            Some(e) => input_events.push(InputEventOut::from(e)),
-            None => break,
-        }
+    while let Some(e) = scanner2.next_input_event().map_err(|e| e.to_string())? {
+        input_events.push(InputEventOut::from(e));
     }
 
     // Re-create scanner for move events
@@ -58,11 +52,8 @@ pub async fn scan_video(
     scanner3.get_metadata().map_err(|e| e.to_string())?;
 
     let mut move_events = Vec::new();
-    loop {
-        match scanner3.next_move_event().map_err(|e| e.to_string())? {
-            Some(e) => move_events.push(MoveEventOut::from(e)),
-            None => break,
-        }
+    while let Some(e) = scanner3.next_move_event().map_err(|e| e.to_string())? {
+        move_events.push(MoveEventOut::from(e));
     }
 
     // Build JSONL for pipeline
@@ -90,9 +81,8 @@ pub async fn scan_video(
         None => PathBuf::from("extraction.db"),
     };
 
-    let invariant_result =
-        run_pipeline(&telemetry_jsonl, &input_jsonl, &move_jsonl, &db_path)
-            .map_err(|e| e.to_string())?;
+    let invariant_result = run_pipeline(&telemetry_jsonl, &input_jsonl, &move_jsonl, &db_path)
+        .map_err(|e| e.to_string())?;
 
     Ok(ScanResult {
         metadata: metadata_out,
@@ -118,9 +108,11 @@ pub fn scanner_version() -> Result<[i32; 3], String> {
         .map_err(|e| format!("Library::new: {}", e))?;
 
     unsafe {
-        let api_version: libloading::Symbol<unsafe extern "C" fn() -> crate::scanner_ffi::ScannerVersion> =
-            lib.get(b"scanner_api_version")
-                .map_err(|e| format!("scanner_api_version: {}", e))?;
+        let api_version: libloading::Symbol<
+            unsafe extern "C" fn() -> crate::scanner_ffi::ScannerVersion,
+        > = lib
+            .get(b"scanner_api_version")
+            .map_err(|e| format!("scanner_api_version: {}", e))?;
         let v = api_version();
         Ok([v.major, v.minor, v.patch])
     }

@@ -28,21 +28,11 @@ pub type ScannerResult<T> = std::result::Result<T, ScannerError>;
 // ===== C ABI matching structs (scanner_api.h) =====
 
 #[repr(C)]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct ScannerVersion {
     pub major: c_int,
     pub minor: c_int,
     pub patch: c_int,
-}
-
-impl Default for ScannerVersion {
-    fn default() -> Self {
-        Self {
-            major: 0,
-            minor: 0,
-            patch: 0,
-        }
-    }
 }
 
 #[repr(C)]
@@ -56,6 +46,7 @@ pub struct ScanConfig {
     pub max_frames: c_int,
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for ScanConfig {
     fn default() -> Self {
         Self {
@@ -191,6 +182,8 @@ type ScannerHandle = *mut std::ffi::c_void;
 /// High-level scanner wrapper
 pub struct Scanner {
     handle: ScannerHandle,
+    _template_pack_cstr: Option<CString>,
+    _config_json_cstr: Option<CString>,
     fn_get_metadata:
         Symbol<'static, unsafe extern "C" fn(ScannerHandle, *mut MatchMetadata) -> c_int>,
     fn_next_telemetry:
@@ -267,13 +260,14 @@ impl Scanner {
         eprintln!("[Rust] DLL path: {:?}", dll_path);
         eprintln!("[Rust] Template pack: {:?}", template_pack_path);
 
-        // Load library and leak it to get 'static lifetime for Symbols
+        // Load library and leak it so Symbols can have 'static lifetime.
+        // The DLL remains loaded for the process lifetime.
         let lib = Box::leak(Box::new(
             unsafe { Library::new(&dll_path) }.map_err(ScannerError::DllLoad)?,
         ));
         eprintln!("[Rust] Library loaded successfully");
 
-        // Load all symbols from leaked library (now 'static)
+        // Load all symbols from library
         let create: Symbol<
             unsafe extern "C" fn(*const c_char, *const ScanConfig) -> ScannerHandle,
         > = unsafe { lib.get(b"scanner_create") }
@@ -312,24 +306,22 @@ impl Scanner {
             version.major, version.minor, version.patch
         );
 
-        // Prepare config with template pack path and scanner config JSON
+        // Prepare config with template pack path and scanner config JSON.
+        // CStrings are stored in the Scanner so their pointers remain valid
+        // for the lifetime of the Scanner (the DLL may retain them).
         let mut cfg = config.unwrap_or_default();
         let template_pack_cstr = CString::new(template_pack_path.to_string_lossy().as_bytes())?;
         cfg.template_pack_path = template_pack_cstr.as_ptr();
-        // Keep the CString alive for the duration of the call
-        let _template_pack_cstr_owned = template_pack_cstr;
 
-                // Load scanner config JSON if not already provided
-                let _json_cstr_owned = if cfg.config_json.is_null() {
-                    load_scanner_config_json().and_then(|json| {
-                        CString::new(json).ok().map(|cstr| {
-                            cfg.config_json = cstr.as_ptr();
-                            cstr
-                        })
-                    })
-                } else {
-                    None
-                };
+        let config_json_cstr = if cfg.config_json.is_null() {
+            load_scanner_config_json().and_then(|json| {
+                CString::new(json).ok().inspect(|cstr| {
+                    cfg.config_json = cstr.as_ptr();
+                })
+            })
+        } else {
+            None
+        };
 
         let path_cstr = CString::new(video_path.as_ref().to_string_lossy().as_bytes())?;
         let handle = unsafe { create(path_cstr.as_ptr(), &cfg) };
@@ -343,11 +335,10 @@ impl Scanner {
             return Err(ScannerError::Creation(err_msg));
         }
 
-        // Note: template_pack_cstr_owned is dropped here, but the pointer was copied to cfg
-        // The DLL should copy the path string immediately in scanner_create
-
         Ok(Self {
             handle,
+            _template_pack_cstr: Some(template_pack_cstr),
+            _config_json_cstr: config_json_cstr,
             fn_get_metadata: get_metadata,
             fn_next_telemetry: next_telemetry,
             fn_next_input_event: next_input_event,
