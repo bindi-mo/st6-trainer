@@ -55,7 +55,7 @@ impl Model {
         }
 
         let version = u32::from_le_bytes([header[4], header[5], header[6], header[7]]);
-        if version < 1 || version > 3 {
+        if !(1..=3).contains(&version) {
             return Err(format!("Unsupported GGUF version: {}", version).into());
         }
 

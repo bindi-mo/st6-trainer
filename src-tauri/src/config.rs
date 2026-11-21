@@ -397,8 +397,10 @@ mod tests {
     // Phase 8: migrate_app_config updates outdated version
     #[test]
     fn test_migrate_app_config_outdated_version() {
-        let mut cfg = AppConfig::default();
-        cfg.config_version = "config-0.9".to_string();
+        let cfg = AppConfig {
+            config_version: "config-0.9".to_string(),
+            ..Default::default()
+        };
         let migrated = migrate_app_config(cfg);
         assert_eq!(migrated.config_version, AppConfig::default().config_version);
     }
