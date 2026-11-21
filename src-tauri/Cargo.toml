@@ -34,6 +34,17 @@ windows = { version = "0.58", features = [
     "Win32_Foundation",
 ] }
 
+# Phase 8: Configuration & model management dependencies
+reqwest = { version = "0.12", features = ["json", "stream"] }
+tokio = { version = "1", features = ["full"] }
+futures-util = "0.3"
+sha2 = "0.10"
+dirs-next = "2.0"
+handlebars = "4.4"
+
+# Phase 9: LLM worker dependencies
+uuid = { version = "1", features = ["v4"] }
+
 [dev-dependencies]
 serial_test = "3"
 tempfile = "3"
