@@ -441,18 +441,8 @@ impl Scanner {
         match ret {
             1 => {
                 // §7.5 項 7: SA 値は 0-3 の範囲 (Rust 側でもクランプを二重チェック)
-                if telemetry.sa_p1 < 0 {
-                    telemetry.sa_p1 = 0;
-                }
-                if telemetry.sa_p1 > 3 {
-                    telemetry.sa_p1 = 3;
-                }
-                if telemetry.sa_p2 < 0 {
-                    telemetry.sa_p2 = 0;
-                }
-                if telemetry.sa_p2 > 3 {
-                    telemetry.sa_p2 = 3;
-                }
+                telemetry.sa_p1 = telemetry.sa_p1.clamp(0, 3);
+                telemetry.sa_p2 = telemetry.sa_p2.clamp(0, 3);
                 Ok(Some(telemetry))
             }
             0 => Ok(None),

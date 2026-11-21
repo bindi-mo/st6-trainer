@@ -67,6 +67,7 @@ impl Default for WorkerConfig {
 }
 
 /// Pending request waiting for a response.
+#[allow(dead_code)]
 struct PendingRequest {
     token_callback: Option<TokenCallback>,
     created_at: std::time::Instant,
@@ -78,6 +79,7 @@ pub struct LlmWorker {
     state: Arc<RwLock<WorkerState>>,
     pipe: Arc<Mutex<Option<NamedPipeClient>>>,
     child: Arc<Mutex<Option<tokio::process::Child>>>,
+    #[allow(dead_code)]
     pending: Arc<Mutex<HashMap<String, PendingRequest>>>,
 }
 
@@ -103,7 +105,7 @@ impl LlmWorker {
         self.set_state(WorkerState::Starting).await;
 
         // Launch the subprocess
-        let mut child = Command::new(&self.config.worker_bin_path)
+        let child = Command::new(&self.config.worker_bin_path)
             .arg("--model")
             .arg(&self.config.model_path)
             .arg("--ctx-size")

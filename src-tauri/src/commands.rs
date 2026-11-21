@@ -169,6 +169,8 @@ pub fn verify_model(
     crate::model_manager::validate_model(&model_file_name, expected_sha256.as_deref())
 }
 
+type ProgressCallback = Box<dyn Fn(u64, Option<u64>) + Send + Sync>;
+
 /// Download a model file from a URL to `$HOME/.st6-trainer/models/`.
 ///
 /// Emits progress via the `model-download-progress` Tauri event.
@@ -180,7 +182,7 @@ pub async fn download_model(
 ) -> Result<crate::model_downloader::DownloadResult, String> {
     let app_clone = app.clone();
     let model_file_name_clone = model_file_name.clone();
-    let progress: Option<Box<dyn Fn(u64, Option<u64>) + Send + Sync>> =
+    let progress: Option<ProgressCallback> =
         Some(Box::new(move |bytes_downloaded, total_bytes| {
             let _ = app_clone.emit("model-download-progress", serde_json::json!({
                 "model_file_name": model_file_name_clone,
@@ -209,7 +211,7 @@ fn get_llm_worker() -> &'static tokio::sync::Mutex<crate::llm_worker::LlmWorker>
 /// Start the LLM worker subprocess and connect via Named Pipe.
 #[tauri::command]
 pub async fn llm_worker_start(
-    app: tauri::AppHandle,
+    _app: tauri::AppHandle,
     model_path: String,
     ctx_size: Option<u32>,
     gpu_layers: Option<i32>,
@@ -247,7 +249,7 @@ pub async fn llm_infer(
     max_tokens: Option<u32>,
 ) -> Result<crate::llm_worker::InferResult, String> {
     let worker = get_llm_worker();
-    let mut w = worker.lock().await;
+    let w = worker.lock().await;
 
     let params = crate::llm_protocol::InferParams {
         temperature,
@@ -270,7 +272,7 @@ pub async fn llm_stream(
 ) -> Result<crate::llm_worker::InferResult, String> {
     let app_clone = app.clone();
     let worker = get_llm_worker();
-    let mut w = worker.lock().await;
+    let w = worker.lock().await;
 
     let params = crate::llm_protocol::InferParams {
         temperature,
@@ -292,7 +294,7 @@ pub async fn llm_stream(
 #[tauri::command]
 pub async fn llm_cancel() -> Result<(), String> {
     let worker = get_llm_worker();
-    let mut w = worker.lock().await;
+    let w = worker.lock().await;
     w.cancel().await
 }
 
@@ -300,6 +302,6 @@ pub async fn llm_cancel() -> Result<(), String> {
 #[tauri::command]
 pub async fn llm_worker_shutdown() -> Result<(), String> {
     let worker = get_llm_worker();
-    let mut w = worker.lock().await;
+    let w = worker.lock().await;
     w.shutdown().await
 }

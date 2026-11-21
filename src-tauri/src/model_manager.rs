@@ -114,7 +114,7 @@ pub fn validate_gguf_header(model_file_name: &str) -> Result<ModelValidationResu
 
     // Version (bytes 4-7, little-endian u32)
     let version = u32::from_le_bytes([header[4], header[5], header[6], header[7]]);
-    if version < GGUF_VERSION_MIN || version > GGUF_VERSION_MAX {
+    if !(GGUF_VERSION_MIN..=GGUF_VERSION_MAX).contains(&version) {
         return Ok(ModelValidationResult {
             valid: false,
             gguf_version: Some(version),
