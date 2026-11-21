@@ -8,6 +8,8 @@ use crate::scanner_ffi::{
 };
 use serde::Serialize;
 use std::path::PathBuf;
+use std::sync::Arc;
+use tauri::Emitter;
 
 /// Result of a scan operation
 #[derive(Debug, Serialize)]
@@ -136,4 +138,168 @@ pub fn set_manual_offsets(
     scanner
         .set_manual_offsets(top_y_offset_px, bottom_y_offset_px, mv)
         .map_err(|e| e.to_string())
+}
+
+// ===== Phase 8: Configuration & Model Management Commands =====
+
+/// Get the current app configuration from `$HOME/.st6-trainer/config.json`.
+#[tauri::command]
+pub fn get_app_config() -> Result<crate::config::AppConfig, String> {
+    Ok(crate::config::load_app_config_from_home())
+}
+
+/// Update the app configuration and persist to `$HOME/.st6-trainer/config.json`.
+#[tauri::command]
+pub fn update_app_config(config: crate::config::AppConfig) -> Result<(), String> {
+    crate::config::save_app_config_to_home(&config)
+}
+
+/// Check whether a model file exists in `$HOME/.st6-trainer/models/`.
+#[tauri::command]
+pub fn check_model_exists(model_file_name: String) -> Result<bool, String> {
+    crate::model_manager::model_exists(&model_file_name)
+}
+
+/// Validate a model file (GGUF header + optional SHA256).
+#[tauri::command]
+pub fn verify_model(
+    model_file_name: String,
+    expected_sha256: Option<String>,
+) -> Result<crate::model_manager::ModelValidationResult, String> {
+    crate::model_manager::validate_model(&model_file_name, expected_sha256.as_deref())
+}
+
+/// Download a model file from a URL to `$HOME/.st6-trainer/models/`.
+///
+/// Emits progress via the `model-download-progress` Tauri event.
+#[tauri::command]
+pub async fn download_model(
+    app: tauri::AppHandle,
+    url: String,
+    model_file_name: String,
+) -> Result<crate::model_downloader::DownloadResult, String> {
+    let app_clone = app.clone();
+    let model_file_name_clone = model_file_name.clone();
+    let progress: Option<Box<dyn Fn(u64, Option<u64>) + Send + Sync>> =
+        Some(Box::new(move |bytes_downloaded, total_bytes| {
+            let _ = app_clone.emit("model-download-progress", serde_json::json!({
+                "model_file_name": model_file_name_clone,
+                "bytes_downloaded": bytes_downloaded,
+                "total_bytes": total_bytes,
+            }));
+        }));
+
+    crate::model_downloader::download_model(&url, &model_file_name, progress).await
+}
+
+// ===== Phase 9: LLM Worker Commands =====
+
+/// Global LLM worker instance.
+static LLM_WORKER: std::sync::OnceLock<tokio::sync::Mutex<crate::llm_worker::LlmWorker>> =
+    std::sync::OnceLock::new();
+
+fn get_llm_worker() -> &'static tokio::sync::Mutex<crate::llm_worker::LlmWorker> {
+    LLM_WORKER.get_or_init(|| {
+        tokio::sync::Mutex::new(crate::llm_worker::LlmWorker::new(
+            crate::llm_worker::WorkerConfig::default(),
+        ))
+    })
+}
+
+/// Start the LLM worker subprocess and connect via Named Pipe.
+#[tauri::command]
+pub async fn llm_worker_start(
+    app: tauri::AppHandle,
+    model_path: String,
+    ctx_size: Option<u32>,
+    gpu_layers: Option<i32>,
+) -> Result<crate::llm_worker::WorkerStatus, String> {
+    let config = crate::llm_worker::WorkerConfig {
+        model_path,
+        ctx_size: ctx_size.unwrap_or(4096),
+        gpu_layers: gpu_layers.unwrap_or(35),
+        pipe_name: crate::named_pipe::DEFAULT_PIPE_NAME.to_string(),
+        ..Default::default()
+    };
+
+    let worker = get_llm_worker();
+    let mut w = worker.lock().await;
+    *w = crate::llm_worker::LlmWorker::new(config);
+    w.start().await.map_err(|e| e.to_string())?;
+
+    Ok(w.status().await)
+}
+
+/// Get the current LLM worker status.
+#[tauri::command]
+pub async fn llm_worker_status() -> Result<crate::llm_worker::WorkerStatus, String> {
+    let worker = get_llm_worker();
+    let w = worker.lock().await;
+    Ok(w.status().await)
+}
+
+/// Run non-streaming LLM inference.
+#[tauri::command]
+pub async fn llm_infer(
+    prompt: String,
+    temperature: Option<f32>,
+    top_p: Option<f32>,
+    max_tokens: Option<u32>,
+) -> Result<crate::llm_worker::InferResult, String> {
+    let worker = get_llm_worker();
+    let mut w = worker.lock().await;
+
+    let params = crate::llm_protocol::InferParams {
+        temperature,
+        top_p,
+        max_tokens,
+        stream: Some(false),
+    };
+
+    w.infer(&prompt, Some(params)).await
+}
+
+/// Run streaming LLM inference with token callbacks via Tauri events.
+#[tauri::command]
+pub async fn llm_stream(
+    app: tauri::AppHandle,
+    prompt: String,
+    temperature: Option<f32>,
+    top_p: Option<f32>,
+    max_tokens: Option<u32>,
+) -> Result<crate::llm_worker::InferResult, String> {
+    let app_clone = app.clone();
+    let worker = get_llm_worker();
+    let mut w = worker.lock().await;
+
+    let params = crate::llm_protocol::InferParams {
+        temperature,
+        top_p,
+        max_tokens,
+        stream: Some(true),
+    };
+
+    let token_callback: crate::llm_worker::TokenCallback = Arc::new(move |token: String| {
+        let _ = app_clone.emit("llm-stream-token", serde_json::json!({
+            "token": token,
+        }));
+    });
+
+    w.infer_stream(&prompt, Some(params), token_callback).await
+}
+
+/// Cancel the current LLM inference.
+#[tauri::command]
+pub async fn llm_cancel() -> Result<(), String> {
+    let worker = get_llm_worker();
+    let mut w = worker.lock().await;
+    w.cancel().await
+}
+
+/// Shutdown the LLM worker subprocess.
+#[tauri::command]
+pub async fn llm_worker_shutdown() -> Result<(), String> {
+    let worker = get_llm_worker();
+    let mut w = worker.lock().await;
+    w.shutdown().await
 }

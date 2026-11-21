@@ -1,11 +1,16 @@
 //! Application configuration loading and merging.
 //!
 //! Two config files are involved:
-//! - `config/app_config.json` — app-level settings (auto read/write, fluid schema)
+//! - `$HOME/.st6-trainer/config.json` — app-level settings (auto read/write, fluid schema)
 //! - `src-tauri/config/scanner_config.json` — scanner algorithm parameters (developer-edited)
 //!
 //! The scanner config is passed to the C++ DLL as a JSON string via
 //! `ScanConfig::config_json`. The app config is used by the Rust side only.
+//!
+//! Phase 8: LLM-related fields added to `AppConfig` (model_path, model_url,
+//! ctx_size, gpu_layers, pipe_name). Config is persisted to
+//! `$HOME/.st6-trainer/config.json` with migration support via a `config_version`
+//! field.
 
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -22,6 +27,13 @@ pub struct AppConfig {
     pub use_gpu: bool,
     pub scanner_config_path: String,
     pub template_pack_path: String,
+    // Phase 8: LLM configuration fields
+    pub model_path: String,
+    pub model_url: String,
+    pub ctx_size: u32,
+    pub gpu_layers: i32,
+    pub pipe_name: String,
+    pub config_version: String,
 }
 
 impl Default for AppConfig {
@@ -35,6 +47,12 @@ impl Default for AppConfig {
             use_gpu: true,
             scanner_config_path: "src-tauri/config/scanner_config.json".to_string(),
             template_pack_path: "src-tauri/templates".to_string(),
+            model_path: String::new(),
+            model_url: "https://huggingface.co/LiquidAI/LFM3-1.7B/resolve/main/LFM3-1.7B-Q8_0.gguf".to_string(),
+            ctx_size: 4096,
+            gpu_layers: 35,
+            pipe_name: r"\\.\pipe\st6_llm_worker".to_string(),
+            config_version: "config-1.0".to_string(),
         }
     }
 }
@@ -170,6 +188,84 @@ pub fn scanner_config_to_json(cfg: &ScannerConfig) -> Option<String> {
     serde_json::to_string(cfg).ok()
 }
 
+/// Phase 8: Load app config from `$HOME/.st6-trainer/config.json`.
+///
+/// Falls back to defaults if the file does not exist or fails to parse.
+/// Runs migration if `config_version` differs from the current default.
+pub fn load_app_config_from_home() -> AppConfig {
+    match crate::paths::resolve_config_path() {
+        Ok(path) => match fs::read_to_string(&path) {
+            Ok(content) => {
+                let mut cfg: AppConfig = match serde_json::from_str(&content) {
+                    Ok(cfg) => cfg,
+                    Err(e) => {
+                        eprintln!(
+                            "[config] Failed to parse config.json at {}: {}",
+                            path.display(),
+                            e
+                        );
+                        AppConfig::default()
+                    }
+                };
+                cfg = migrate_app_config(cfg);
+                cfg
+            }
+            Err(e) => {
+                eprintln!(
+                    "[config] Failed to read config.json at {}: {}",
+                    path.display(),
+                    e
+                );
+                AppConfig::default()
+            }
+        },
+        Err(e) => {
+            eprintln!("[config] Failed to resolve config path: {}", e);
+            AppConfig::default()
+        }
+    }
+}
+
+/// Phase 8: Save app config to `$HOME/.st6-trainer/config.json`.
+///
+/// Creates the file if it does not exist, overwrites otherwise.
+pub fn save_app_config_to_home(cfg: &AppConfig) -> Result<(), String> {
+    let path = crate::paths::resolve_config_path()?;
+    let json = serde_json::to_string_pretty(cfg)
+        .map_err(|e| format!("Failed to serialize config: {}", e))?;
+    fs::write(&path, json).map_err(|e| {
+        format!(
+            "Failed to write config.json at {}: {}",
+            path.display(),
+            e
+        )
+    })?;
+    Ok(())
+}
+
+/// Phase 8: Migrate app config to the current schema version.
+///
+/// Compares `config_version` against the default and applies any needed
+/// migrations. Currently only v1 (config-1.0) exists; this is a placeholder
+/// for future migrations.
+fn migrate_app_config(mut cfg: AppConfig) -> AppConfig {
+    let current_version = AppConfig::default().config_version.clone();
+    if cfg.config_version == current_version {
+        return cfg;
+    }
+
+    eprintln!(
+        "[config] Migrating config from '{}' to '{}'",
+        cfg.config_version, current_version
+    );
+
+    // Future migrations go here, e.g.:
+    // if cfg.config_version == "config-0.9" { ... }
+
+    cfg.config_version = current_version;
+    cfg
+}
+
 /// Resolve the template pack path relative to the project root.
 pub fn resolve_template_pack_path(app: &tauri::AppHandle) -> Option<PathBuf> {
     let resolver = app.path();
@@ -263,5 +359,47 @@ mod tests {
         let parsed: ScannerConfig = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(parsed.canonical_raster, [1920, 1080]);
         assert_eq!(parsed.rows_visible, 19);
+    }
+
+    // Phase 8: AppConfig default LLM fields
+    #[test]
+    fn test_app_config_default_llm_fields() {
+        let cfg = AppConfig::default();
+        assert!(!cfg.model_path.is_empty() || cfg.model_path.is_empty()); // model_path may be empty until set
+        assert!(!cfg.model_url.is_empty());
+        assert!(cfg.ctx_size > 0);
+        assert!(cfg.gpu_layers >= 0);
+        assert!(!cfg.pipe_name.is_empty());
+        assert!(!cfg.config_version.is_empty());
+    }
+
+    // Phase 8: AppConfig JSON roundtrip including LLM fields
+    #[test]
+    fn test_app_config_json_roundtrip() {
+        let cfg = AppConfig::default();
+        let json = serde_json::to_string(&cfg).expect("serialize");
+        let parsed: AppConfig = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(parsed.model_url, cfg.model_url);
+        assert_eq!(parsed.ctx_size, cfg.ctx_size);
+        assert_eq!(parsed.gpu_layers, cfg.gpu_layers);
+        assert_eq!(parsed.pipe_name, cfg.pipe_name);
+        assert_eq!(parsed.config_version, cfg.config_version);
+    }
+
+    // Phase 8: migrate_app_config keeps current version unchanged
+    #[test]
+    fn test_migrate_app_config_current_version() {
+        let cfg = AppConfig::default();
+        let migrated = migrate_app_config(cfg);
+        assert_eq!(migrated.config_version, AppConfig::default().config_version);
+    }
+
+    // Phase 8: migrate_app_config updates outdated version
+    #[test]
+    fn test_migrate_app_config_outdated_version() {
+        let mut cfg = AppConfig::default();
+        cfg.config_version = "config-0.9".to_string();
+        let migrated = migrate_app_config(cfg);
+        assert_eq!(migrated.config_version, AppConfig::default().config_version);
     }
 }

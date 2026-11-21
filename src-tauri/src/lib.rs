@@ -2,6 +2,12 @@
 
 pub mod commands;
 pub mod config;
+pub mod llm_protocol;
+pub mod llm_worker;
+pub mod model_downloader;
+pub mod model_manager;
+pub mod named_pipe;
+pub mod paths;
 pub mod pipeline;
 pub mod scanner_ffi;
 
@@ -19,7 +25,20 @@ pub fn run() {
             greet,
             commands::scan_video,
             commands::scanner_version,
-            commands::set_manual_offsets
+            commands::set_manual_offsets,
+            // Phase 8: Configuration & model management commands
+            commands::get_app_config,
+            commands::update_app_config,
+            commands::check_model_exists,
+            commands::verify_model,
+            commands::download_model,
+            // Phase 9: LLM worker commands
+            commands::llm_worker_start,
+            commands::llm_worker_status,
+            commands::llm_infer,
+            commands::llm_stream,
+            commands::llm_cancel,
+            commands::llm_worker_shutdown,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
