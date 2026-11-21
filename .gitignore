@@ -12,6 +12,9 @@ dist
 dist-ssr
 *.local
 
+# LLM worker
+st6_llm_worker/target
+
 # scanner dll
 scanner-cpp/opencv-*
 scanner-cpp/build
