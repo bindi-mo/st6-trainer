@@ -30,8 +30,8 @@
 
 | Phase | 名称 | 主タスク | 依存 | 状態 |
 |-------|------|----------|------|------|
-| **8** | 設定ファイル・モデル管理基盤 | `$HOME/.st6-trainer/config.json`、`models/` ディレクトリ、モデルダウンロード | Phase 0-7 | 未実装 |
-| **9** | LLM 推論モジュール (子プロセス + Named Pipe) | `llm_worker.rs`、Named Pipe IPC、モデルロード・推論・ストリーミング | Phase 8 | 未実装 |
+| **8** | 設定ファイル・モデル管理基盤 | `$HOME/.st6-trainer/config.json`、`models/` ディレクトリ、モデルダウンロード | Phase 0-7 | 完了 |
+| **9** | LLM 推論モジュール (子プロセス + Named Pipe) | `llm_worker.rs`、Named Pipe IPC、モデルロード・推論・ストリーミング | Phase 8 | 完了 |
 | **10** | 構造化 RAG & コンテキストアセンブリ | SQLite からスキャン結果読み取り、handlebars テンプレートでプロンプト組み立て | Phase 9 | 未実装 |
 | **11** | LLM Tauri コマンド・フロントエンド UI | `llm_infer`/`llm_stream` コマンド、チャット/レポート UI | Phase 9, 10 | 未実装 |
 | **12** | SQLite データベース本格統合 | `match_metadata` テーブル、フレームデータマスター import、試合記録保存、user_version マイグレーション | Phase 0-7 | 未実装 |
@@ -48,15 +48,15 @@
 
 ### 作業項目
 
-| # | タスク | ファイル | 内容 |
-|---|--------|----------|------|
-| 8.1 | パス解決ユーティリティ | `src-tauri/src/paths.rs` (新規) | `$HOME/.st6-trainer/` 解決、ディレクトリ作成、権限チェック、`config.json`/`models/`/`st6_trainer.db` パス提供 |
-| 8.2 | 設定構造体定義 | `src-tauri/src/config.rs` | `AppConfig` に LLM 関連フィールド追加 (model_path, model_url, ctx_size, gpu_layers, pipe_name 等) |
-| 8.3 | 設定読み書き | `src-tauri/src/config.rs` | `$HOME/.st6-trainer/config.json` の読み込み・保存・デフォルト生成・マイグレーション |
-| 8.4 | モデル管理 | `src-tauri/src/model_manager.rs` (新規) | `$HOME/.st6-trainer/models/` 管理、GGUF ヘッダー検証、SHA256 チェックサム検証、存在チェック |
-| 8.5 | モデルダウンロード | `src-tauri/src/model_downloader.rs` (新規) | Hugging Face から `LFM3-1.7B-Q8_0.gguf` をダウンロード (`reqwest` + 進捗コールバック)、再開対応 |
-| 8.6 | Tauri コマンド | `src-tauri/src/commands.rs` | `get_app_config`, `update_app_config`, `download_model`, `check_model_exists`, `verify_model` |
-| 8.7 | ビルド設定 | `src-tauri/Cargo.toml` | `reqwest`, `tokio`, `sha2`, `dirs-next`, `handlebars` 等を追加 |
+| # | タスク | ファイル | 内容 | 状態 |
+|---|--------|----------|------|------|
+| 8.1 | パス解決ユーティリティ | `src-tauri/src/paths.rs` (新規) | `$HOME/.st6-trainer/` 解決、ディレクトリ作成、権限チェック、`config.json`/`models/`/`st6_trainer.db` パス提供 | 完了 |
+| 8.2 | 設定構造体定義 | `src-tauri/src/config.rs` | `AppConfig` に LLM 関連フィールド追加 (model_path, model_url, ctx_size, gpu_layers, pipe_name 等) | 完了 |
+| 8.3 | 設定読み書き | `src-tauri/src/config.rs` | `$HOME/.st6-trainer/config.json` の読み込み・保存・デフォルト生成・マイグレーション | 完了 |
+| 8.4 | モデル管理 | `src-tauri/src/model_manager.rs` (新規) | `$HOME/.st6-trainer/models/` 管理、GGUF ヘッダー検証、SHA256 チェックサム検証、存在チェック | 完了 |
+| 8.5 | モデルダウンロード | `src-tauri/src/model_downloader.rs` (新規) | Hugging Face から `LFM3-1.7B-Q8_0.gguf` をダウンロード (`reqwest` + 進捗コールバック)、再開対応 | 完了 |
+| 8.6 | Tauri コマンド | `src-tauri/src/commands.rs` | `get_app_config`, `update_app_config`, `download_model`, `check_model_exists`, `verify_model` | 完了 |
+| 8.7 | ビルド設定 | `src-tauri/Cargo.toml` | `reqwest`, `tokio`, `sha2`, `dirs-next`, `handlebars` 等を追加 | 完了 |
 
 ### 成果物
 - `$HOME/.st6-trainer/config.json` の読み書き・マイグレーション機能
@@ -116,17 +116,17 @@ llama.cpp を子プロセスとして起動し、Named Pipe (Windows) で推論�
 
 ### 作業項目
 
-| # | タスク | ファイル | 内容 |
-|---|--------|----------|------|
-| 9.1 | IPC プロトコル定義 | `src-tauri/src/llm_protocol.rs` (新規) | Request/Response/StreamChunk/Error の serde 構造体、メッセージフレーミング、バージョンヘッダー |
-| 9.2 | Named Pipe クライアント | `src-tauri/src/named_pipe.rs` (新規) | Windows API (`CreateFile`, `ReadFile`, `WriteFile`, `WaitNamedPipe`) ラッパー、非同期 I/O (`tokio::net::windows::named_pipe`) |
-| 9.3 | LLM ワーカー管理 | `src-tauri/src/llm_worker.rs` (新規) | 子プロセス起動・停止・監視、Named Pipe 接続管理、リクエストキュー (シングルキュー、順次処理) |
-| 9.4 | モデルロード管理 | `src-tauri/src/llm_worker.rs` | 起動時引数でモデルパス・ctx_size・gpu_layers 渡し、Ready 通知待ち |
-| 9.5 | 推論リクエスト送信 | `src-tauri/src/llm_worker.rs` | キューイング、タイムアウト (デフォルト 120s)、キャンセル対応 |
-| 9.6 | ストリーミング受信 | `src-tauri/src/llm_worker.rs` | トークン単位でコールバック/チャネル経由でフロントエンドへ転送 |
-| 9.7 | エラーハンドリング | `src-tauri/src/llm_worker.rs` | 起動失敗、ロード失敗、Pipe 断、タイムアウト、プロトコルエラー、自動再接続 (最大 3 回) |
-| 9.8 | 状態管理 | `src-tauri/src/llm_worker.rs` | `Uninitialized`/`Starting`/`Connecting`/`LoadingModel`/`Ready`/`Busy`/`Error`/`ShuttingDown` |
-| 9.9 | 子プロセス実装 | `st6_llm_worker/` (新規 Cargo プロジェクト) | llama.cpp ベースのスタンドアロン実行ファイル、Named Pipe サーバー、推論ループ |
+| # | タスク | ファイル | 内容 | 状態 |
+|---|--------|----------|------|------|
+| 9.1 | IPC プロトコル定義 | `src-tauri/src/llm_protocol.rs` (新規) | Request/Response/StreamChunk/Error の serde 構造体、メッセージフレーミング、バージョンヘッダー | 完了 |
+| 9.2 | Named Pipe クライアント | `src-tauri/src/named_pipe.rs` (新規) | Windows API (`CreateFile`, `ReadFile`, `WriteFile`, `WaitNamedPipe`) ラッパー、非同期 I/O (`tokio::net::windows::named_pipe`) | 完了 |
+| 9.3 | LLM ワーカー管理 | `src-tauri/src/llm_worker.rs` (新規) | 子プロセス起動・停止・監視、Named Pipe 接続管理、リクエストキュー (シングルキュー、順次処理) | 完了 |
+| 9.4 | モデルロード管理 | `src-tauri/src/llm_worker.rs` | 起動時引数でモデルパス・ctx_size・gpu_layers 渡し、Ready 通知待ち | 完了 |
+| 9.5 | 推論リクエスト送信 | `src-tauri/src/llm_worker.rs` | キューイング、タイムアウト (デフォルト 120s)、キャンセル対応 | 完了 |
+| 9.6 | ストリーミング受信 | `src-tauri/src/llm_worker.rs` | トークン単位でコールバック/チャネル経由でフロントエンドへ転送 | 完了 |
+| 9.7 | エラーハンドリング | `src-tauri/src/llm_worker.rs` | 起動失敗、ロード失敗、Pipe 断、タイムアウト、プロトコルエラー、自動再接続 (最大 3 回) | 完了 |
+| 9.8 | 状態管理 | `src-tauri/src/llm_worker.rs` | `Uninitialized`/`Starting`/`Connecting`/`LoadingModel`/`Ready`/`Busy`/`Error`/`ShuttingDown` | 完了 |
+| 9.9 | 子プロセス実装 | `st6_llm_worker/` (新規 Cargo プロジェクト) | llama.cpp ベースのスタンドアロン実行ファイル、Named Pipe サーバー、推論ループ | 完了 |
 
 ### 成果物
 - LLM ワーカー子プロセス (`st6_llm_worker.exe`) の起動・停止・管理
