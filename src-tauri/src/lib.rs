@@ -1,7 +1,7 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 
-pub mod config;
 pub mod commands;
+pub mod config;
 pub mod pipeline;
 pub mod scanner_ffi;
 
@@ -15,7 +15,12 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![greet, commands::scan_video, commands::scanner_version, commands::set_manual_offsets])
+        .invoke_handler(tauri::generate_handler![
+            greet,
+            commands::scan_video,
+            commands::scanner_version,
+            commands::set_manual_offsets
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

@@ -746,20 +746,9 @@ extern "C"
             snprintf(out->character_name_p1, sizeof(out->character_name_p1), "%s", char_p1.c_str());
             snprintf(out->character_name_p2, sizeof(out->character_name_p2), "%s", char_p2.c_str());
 
-            // Control types (Phase 6: resolved from classic.png/modern.png classifier templates)
-            // Resolve control type from the first valid frame and store in input tracker
-            auto ctrl_p1 = impl->input_tracker->resolve_control_type(impl->first_frame, impl->config.threshold_input_glyph);
-            auto ctrl_p2 = impl->input_tracker->resolve_control_type(impl->first_frame, impl->config.threshold_input_glyph);
-            impl->input_tracker->set_control_type("P1", ctrl_p1.control_type);
-            impl->input_tracker->set_control_type("P2", ctrl_p2.control_type);
-
-            snprintf(out->control_type_p1, sizeof(out->control_type_p1), "%s", ctrl_p1.control_type.c_str());
-            snprintf(out->control_type_p2, sizeof(out->control_type_p2), "%s", ctrl_p2.control_type.c_str());
-
-            cout << "[Scanner] Control type P1: " << ctrl_p1.control_type
-                 << " (conf=" << ctrl_p1.confidence << ")" << endl;
-            cout << "[Scanner] Control type P2: " << ctrl_p2.control_type
-                 << " (conf=" << ctrl_p2.confidence << ")" << endl;
+            // Control types will be resolved after input tracker is initialized below
+            snprintf(out->control_type_p1, sizeof(out->control_type_p1), "");
+            snprintf(out->control_type_p2, sizeof(out->control_type_p2), "");
 
             out->detected_at_frame = 1;
 
@@ -791,6 +780,21 @@ extern "C"
                 impl->input_tracker_initialized = true;
                 cout << "[Scanner] Input tracker initialized" << endl;
             }
+
+            // Resolve control types from classic.png/modern.png classifier templates (Phase 6)
+            // Must be after input_tracker is initialized
+            auto ctrl_p1 = impl->input_tracker->resolve_control_type(impl->first_frame, impl->config.threshold_input_glyph);
+            auto ctrl_p2 = impl->input_tracker->resolve_control_type(impl->first_frame, impl->config.threshold_input_glyph);
+            impl->input_tracker->set_control_type("P1", ctrl_p1.control_type);
+            impl->input_tracker->set_control_type("P2", ctrl_p2.control_type);
+
+            snprintf(out->control_type_p1, sizeof(out->control_type_p1), "%s", ctrl_p1.control_type.c_str());
+            snprintf(out->control_type_p2, sizeof(out->control_type_p2), "%s", ctrl_p2.control_type.c_str());
+
+            cout << "[Scanner] Control type P1: " << ctrl_p1.control_type
+                 << " (conf=" << ctrl_p1.confidence << ")" << endl;
+            cout << "[Scanner] Control type P2: " << ctrl_p2.control_type
+                 << " (conf=" << ctrl_p2.confidence << ")" << endl;
 
             // Initialize gauge detector (Phase 4)
             if (!impl->gauge_detector_initialized)
@@ -967,11 +971,15 @@ extern "C"
                 hp_p1 = gauges.hp_p1.value;
                 out->drive_p1 = gauges.drive_p1.value * 6.0; // Drive ゲージは 0-6 段階
                 out->sa_p1 = static_cast<int>(std::round(gauges.sa_p1.value * 3.0)); // SA は 0-3 段階
+                if (out->sa_p1 < 0) out->sa_p1 = 0; // §7.5 項 7: クランプ
+                if (out->sa_p1 > 3) out->sa_p1 = 3;
                 out->in_burnout_p1 = gauges.in_burnout_p1 ? 1 : 0;
 
                 hp_p2 = gauges.hp_p2.value;
                 out->drive_p2 = gauges.drive_p2.value * 6.0;
                 out->sa_p2 = static_cast<int>(std::round(gauges.sa_p2.value * 3.0));
+                if (out->sa_p2 < 0) out->sa_p2 = 0; // §7.5 項 7: クランプ
+                if (out->sa_p2 > 3) out->sa_p2 = 3;
                 out->in_burnout_p2 = gauges.in_burnout_p2 ? 1 : 0;
 
                 // Quality flags for occluded gauges

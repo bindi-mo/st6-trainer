@@ -11,8 +11,8 @@
 use std::path::PathBuf;
 
 use st6_trainer_lib::scanner_ffi::{
-    c_arr_to_string_pub, FrameTelemetry, InputEvent, MatchMetadata, MoveEvent, ScanConfig,
-    ScannerVersion,
+    FrameTelemetry, InputEvent, MatchMetadata, MoveEvent, ScanConfig, ScannerVersion,
+    c_arr_to_string_pub,
 };
 
 fn manifest_dir() -> PathBuf {
@@ -21,11 +21,7 @@ fn manifest_dir() -> PathBuf {
 
 fn find_replay() -> Option<PathBuf> {
     let p = manifest_dir().join("videos/replay_00.mkv");
-    if p.exists() {
-        Some(p)
-    } else {
-        None
-    }
+    if p.exists() { Some(p) } else { None }
 }
 
 fn main() {
@@ -139,9 +135,7 @@ fn run_round_trip(video: &std::path::Path) -> Result<(), String> {
             let msg = if p.is_null() {
                 "unknown".to_string()
             } else {
-                std::ffi::CStr::from_ptr(p)
-                    .to_string_lossy()
-                    .into_owned()
+                std::ffi::CStr::from_ptr(p).to_string_lossy().into_owned()
             };
             return Err(format!("scanner_create returned null: {}", msg));
         }

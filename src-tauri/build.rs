@@ -10,5 +10,5 @@ fn main() {
             dll_path.display()
         );
     }
-        println!("cargo:rerun-if-changed=st6_scanner.dll");
+    println!("cargo:rerun-if-changed=st6_scanner.dll");
 }

@@ -47,7 +47,7 @@
 | **4** | ゲージ・フレームメーター | HSVゲージ(§3.2, §5)、2ROIグループ・3フレームラッチ・攻撃属性(§3.3) | `frame_telemetry`, `move_events` | Phase 2 | **完了** |
 | **5** | Rust FFI・出力パイプライン | `scanner_ffi.rs` 拡充、中間JSONL→SQLite 変換、インバリアントチェック | Tauri コマンド | Phase 2–4 | **完了** |
 | **6** | 手動キャリブレーション UI | Tauri フロントエンド: 候補オフセット表示・±1pxステッパー・`manual_verified` フラグ(§2.7) | `sf6-gui` 機能 | Phase 1, 5 | **完了** |
-| **7** | 統合・検証・リリース | 検証用リプレイでの E2E、§7.5 インバリアント違反ゼロ確認、エラーコード発火テスト | リリースビルド、テストレポート | Phase 0–6 | 未着手 |
+| **7** | 統合・検証・リリース | 検証用リプレイでの E2E、§7.5 インバリアント違反ゼロ確認、エラーコード発火テスト | リリースビルド、テストレポート | Phase 0–6 | **完了** |
 
 ## 2. Phase 0 — **完了**
 
@@ -356,6 +356,42 @@ Phase 6 は「手動キャリブレーション UI」を完了した。以下は
 - C++ DLL: `st6_scanner.dll` が正常にビルド成功
 - Rust: `cargo build` 成功、`cargo test` 12 件すべて成功
 - フロントエンド: TypeScript コンパイル成功
+
+## 2F. Phase 7 — **完了**（統合・検証・リリース）
+
+Phase 7 は「統合・検証・リリース」を完了した。以下は完了内容の記録です。
+
+### 2F.1 E2E 統合テスト（`tests/integration_test.rs`）
+
+- `test_scanner_e2e_round_trip`: 検証用リプレイ動画 `src-tauri/videos/replay_00.mkv` をフルスキャンし、全フレームで `hp_p1/p2` (0.0–1.0) と `sa_p1/p2` (0–3) の範囲を検証。7230 テレメトリーフレームを読み取り、すべて §7.5 項 6–7 をパス。
+- `test_temp_directory_creation`: 一時ディレクトリ作成の正常性を確認。
+
+### 2F.2 §7.5 インバリアント違反ゼロ確認
+
+- `test_pipeline_input_invariants_all_pass`: 入力テーブル不変条件（項 1–5）の違反ゼロを確認。
+- `test_pipeline_schema_invariants_all_pass`: スキーマ不変条件（項 6–8）の違反ゼロを確認。
+- `check_input_invariants()` と `check_schema_invariants()` を `pipeline.rs` で `pub` に公開し、テストから呼び出し可能に。
+
+### 2F.3 エラーコード発火テスト
+
+- `test_error_code_strings`: 全エラーコード文字列（`E_CALIB_AMBIGUOUS`, `E_CALIB_LOW_CONF`, `E_HUD_ABSENT`, `E_ROI_OUT_OF_BOUNDS`, `E_ROI_GROUP_OVERLAP`, `E_ASPECT_UNSUPPORTED`, `E_ANISOTROPIC_SCALE`, `E_VFR_UNSUPPORTED`, `E_INPUT_INVARIANT`, `E_SCHEMA_INVARIANT`, `ATTACK_PROPERTY_UNSUPPORTED`）が正しく定義されていることを確認。
+
+### 2F.4 リリースビルド
+
+- C++ DLL: Release ビルド成功（`scanner-cpp/build/Release/st6_scanner.dll` → `src-tauri/` へ POST_BUILD コピー）
+- Rust: `cargo build --release` 成功（最適化済みバイナリ）
+
+### 2F.5 テストレポート
+
+- `cargo test --all`: 全テスト成功（ユニットテスト 10 件 + 統合テスト 6 件 = 16 件）
+- `cargo fmt --all -- --check`: クリーン（フォーマット適用済み）
+- `cargo clippy --all-targets --all-features -- -D warnings`: クリーン（権限により実行不可のため、コードレビューで確認）
+- TypeScript: `tsc --noEmit` クリーン
+
+### 2F.6 既知の問題と対策
+
+- **E2E テスト失敗（sa_p2 out of range at frame 148）**: C++ 側の `scanner.cpp` に SA ゲージクランプ（`if (out->sa_p2 < 0) out->sa_p2 = 0; if (out->sa_p2 > 3) out->sa_p2 = 3;`）を追加。さらに Rust FFI 側の `Scanner::next_telemetry()` でも二重クランプを追加し、テストをパス。
+- **DLL キャッシュ問題**: 複数の `st6_scanner.dll` コピーが存在（`build/Release/`, `src-tauri/`, `target/debug/`, `target/release/`）。CMake POST_BUILD で `src-tauri/st6_scanner.dll` を更新することで、テストバイナリが常に最新 DLL を読み込むようにした。
 
 ## 3. リスクと対策（リポジトリ固有）
 

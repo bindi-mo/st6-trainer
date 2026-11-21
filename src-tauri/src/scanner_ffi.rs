@@ -194,7 +194,8 @@ pub struct Scanner {
         Symbol<'static, unsafe extern "C" fn(ScannerHandle, *mut MoveEvent) -> c_int>,
     fn_destroy: Symbol<'static, unsafe extern "C" fn(ScannerHandle)>,
     fn_get_last_error: Symbol<'static, unsafe extern "C" fn() -> *const c_char>,
-    fn_set_manual_offsets: Symbol<'static, unsafe extern "C" fn(ScannerHandle, c_int, c_int, c_int) -> c_int>,
+    fn_set_manual_offsets:
+        Symbol<'static, unsafe extern "C" fn(ScannerHandle, c_int, c_int, c_int) -> c_int>,
 }
 
 /// Resolve DLL path from src-tauri/ (copied by CMake POST_BUILD)
@@ -287,33 +288,28 @@ fn init_scanner(
     eprintln!("[Rust] Library loaded successfully");
 
     // Load all symbols from library
-    let create: Symbol<
-        unsafe extern "C" fn(*const c_char, *const ScanConfig) -> ScannerHandle,
-    > = unsafe { lib.get(b"scanner_create") }
-        .map_err(|e| ScannerError::SymbolNotFound(format!("scanner_create: {}", e)))?;
+    let create: Symbol<unsafe extern "C" fn(*const c_char, *const ScanConfig) -> ScannerHandle> =
+        unsafe { lib.get(b"scanner_create") }
+            .map_err(|e| ScannerError::SymbolNotFound(format!("scanner_create: {}", e)))?;
     let get_metadata: Symbol<unsafe extern "C" fn(ScannerHandle, *mut MatchMetadata) -> c_int> =
         unsafe { lib.get(b"scanner_get_metadata") }
             .map_err(|e| ScannerError::SymbolNotFound(format!("scanner_get_metadata: {}", e)))?;
-    let next_telemetry: Symbol<
-        unsafe extern "C" fn(ScannerHandle, *mut FrameTelemetry) -> c_int,
-    > = unsafe { lib.get(b"scanner_next_telemetry") }
-        .map_err(|e| ScannerError::SymbolNotFound(format!("scanner_next_telemetry: {}", e)))?;
-    let next_input_event: Symbol<
-        unsafe extern "C" fn(ScannerHandle, *mut InputEvent) -> c_int,
-    > = unsafe { lib.get(b"scanner_next_input_event") }.map_err(|e| {
-        ScannerError::SymbolNotFound(format!("scanner_next_input_event: {}", e))
-    })?;
-    let next_move_event: Symbol<unsafe extern "C" fn(ScannerHandle, *mut MoveEvent) -> c_int> =
-        unsafe { lib.get(b"scanner_next_move_event") }.map_err(|e| {
-            ScannerError::SymbolNotFound(format!("scanner_next_move_event: {}", e))
+    let next_telemetry: Symbol<unsafe extern "C" fn(ScannerHandle, *mut FrameTelemetry) -> c_int> =
+        unsafe { lib.get(b"scanner_next_telemetry") }
+            .map_err(|e| ScannerError::SymbolNotFound(format!("scanner_next_telemetry: {}", e)))?;
+    let next_input_event: Symbol<unsafe extern "C" fn(ScannerHandle, *mut InputEvent) -> c_int> =
+        unsafe { lib.get(b"scanner_next_input_event") }.map_err(|e| {
+            ScannerError::SymbolNotFound(format!("scanner_next_input_event: {}", e))
         })?;
+    let next_move_event: Symbol<unsafe extern "C" fn(ScannerHandle, *mut MoveEvent) -> c_int> =
+        unsafe { lib.get(b"scanner_next_move_event") }
+            .map_err(|e| ScannerError::SymbolNotFound(format!("scanner_next_move_event: {}", e)))?;
     let destroy: Symbol<unsafe extern "C" fn(ScannerHandle)> =
         unsafe { lib.get(b"scanner_destroy") }
             .map_err(|e| ScannerError::SymbolNotFound(format!("scanner_destroy: {}", e)))?;
-    let get_last_error: Symbol<unsafe extern "C" fn() -> *const c_char> = unsafe {
-        lib.get(b"scanner_get_last_error")
-    }
-    .map_err(|e| ScannerError::SymbolNotFound(format!("scanner_get_last_error: {}", e)))?;
+    let get_last_error: Symbol<unsafe extern "C" fn() -> *const c_char> =
+        unsafe { lib.get(b"scanner_get_last_error") }
+            .map_err(|e| ScannerError::SymbolNotFound(format!("scanner_get_last_error: {}", e)))?;
     let set_manual_offsets: Symbol<
         unsafe extern "C" fn(ScannerHandle, c_int, c_int, c_int) -> c_int,
     > = unsafe { lib.get(b"scanner_set_manual_offsets") }
@@ -443,7 +439,22 @@ impl Scanner {
         let mut telemetry = FrameTelemetry::default();
         let ret = unsafe { (self.fn_next_telemetry)(self.handle, &mut telemetry) };
         match ret {
-            1 => Ok(Some(telemetry)),
+            1 => {
+                // §7.5 項 7: SA 値は 0-3 の範囲 (Rust 側でもクランプを二重チェック)
+                if telemetry.sa_p1 < 0 {
+                    telemetry.sa_p1 = 0;
+                }
+                if telemetry.sa_p1 > 3 {
+                    telemetry.sa_p1 = 3;
+                }
+                if telemetry.sa_p2 < 0 {
+                    telemetry.sa_p2 = 0;
+                }
+                if telemetry.sa_p2 > 3 {
+                    telemetry.sa_p2 = 3;
+                }
+                Ok(Some(telemetry))
+            }
             0 => Ok(None),
             -1 => {
                 let err_ptr = unsafe { (self.fn_get_last_error)() };

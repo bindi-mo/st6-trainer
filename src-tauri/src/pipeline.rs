@@ -3,7 +3,7 @@
 //! Reads scanner output (FrameTelemetry, InputEvent, MoveEvent) as JSONL,
 //! validates invariants per §7.5, and writes to a SQLite database.
 
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::fs;
@@ -156,7 +156,7 @@ fn parse_jsonl<T: for<'de> Deserialize<'de>>(content: &str) -> Result<Vec<T>, St
 }
 
 /// §7.5 項 1-5: 入力テーブル不変条件チェック
-fn check_input_invariants(inputs: &[JsonlInputEvent], violations: &mut Vec<String>) {
+pub fn check_input_invariants(inputs: &[JsonlInputEvent], violations: &mut Vec<String>) {
     let mut seen_keys: HashSet<(i32, String, i32)> = HashSet::new();
 
     for input in inputs {
@@ -208,7 +208,7 @@ fn check_input_invariants(inputs: &[JsonlInputEvent], violations: &mut Vec<Strin
 }
 
 /// §7.5 項 6-8: スキーマ不変条件チェック
-fn check_schema_invariants(
+pub fn check_schema_invariants(
     telemetry: &[JsonlFrameTelemetry],
     _inputs: &[JsonlInputEvent],
     _moves: &[JsonlMoveEvent],
@@ -364,9 +364,22 @@ fn write_sqlite(
     for t in telemetry {
         let flags = serde_json::to_string(&t.quality_flags).unwrap_or_default();
         stmt.execute(params![
-            t.frame_index, t.source_frame_index, t.timestamp_ms, t.round_index, t.hp_reset,
-            t.hp_p1, t.drive_p1, t.sa_p1, t.in_burnout_p1, t.hp_p2, t.drive_p2, t.sa_p2, t.in_burnout_p2, flags
-        ]).map_err(|e| format!("Failed to insert telemetry: {}", e))?;
+            t.frame_index,
+            t.source_frame_index,
+            t.timestamp_ms,
+            t.round_index,
+            t.hp_reset,
+            t.hp_p1,
+            t.drive_p1,
+            t.sa_p1,
+            t.in_burnout_p1,
+            t.hp_p2,
+            t.drive_p2,
+            t.sa_p2,
+            t.in_burnout_p2,
+            flags
+        ])
+        .map_err(|e| format!("Failed to insert telemetry: {}", e))?;
     }
     drop(stmt);
 
@@ -380,10 +393,24 @@ fn write_sqlite(
         let btns = serde_json::to_string(&e.buttons).unwrap_or_default();
         let flags = serde_json::to_string(&e.quality_flags).unwrap_or_default();
         stmt.execute(params![
-            e.frame_start, e.frame_end, e.frame_span_video, e.hold_frames, e.counter_clipped,
-            e.hold_frames_lower_bound, e.time_dilation_suspected, e.resync_used, e.unknown_glyph,
-            e.is_preround, e.player, e.round_index, e.event_index, dirs, btns, flags
-        ]).map_err(|e| format!("Failed to insert input event: {}", e))?;
+            e.frame_start,
+            e.frame_end,
+            e.frame_span_video,
+            e.hold_frames,
+            e.counter_clipped,
+            e.hold_frames_lower_bound,
+            e.time_dilation_suspected,
+            e.resync_used,
+            e.unknown_glyph,
+            e.is_preround,
+            e.player,
+            e.round_index,
+            e.event_index,
+            dirs,
+            btns,
+            flags
+        ])
+        .map_err(|e| format!("Failed to insert input event: {}", e))?;
     }
     drop(stmt);
 
@@ -395,11 +422,26 @@ fn write_sqlite(
     for m in moves {
         let flags = serde_json::to_string(&m.quality_flags).unwrap_or_default();
         stmt.execute(params![
-            m.frame_start, m.frame_end, m.round_index, m.fm_startup_p1, m.fm_total_p1, m.fm_advantage_p1,
-            m.fm_startup_p2, m.fm_total_p2, m.fm_advantage_p2, m.damage_p1, m.combo_damage_p1,
-            m.damage_p2, m.combo_damage_p2, m.attack_property_p1, m.attack_property_p2,
-            m.attack_property_locale, m.conf, flags
-        ]).map_err(|e| format!("Failed to insert move event: {}", e))?;
+            m.frame_start,
+            m.frame_end,
+            m.round_index,
+            m.fm_startup_p1,
+            m.fm_total_p1,
+            m.fm_advantage_p1,
+            m.fm_startup_p2,
+            m.fm_total_p2,
+            m.fm_advantage_p2,
+            m.damage_p1,
+            m.combo_damage_p1,
+            m.damage_p2,
+            m.combo_damage_p2,
+            m.attack_property_p1,
+            m.attack_property_p2,
+            m.attack_property_locale,
+            m.conf,
+            flags
+        ])
+        .map_err(|e| format!("Failed to insert move event: {}", e))?;
     }
     drop(stmt);
 
