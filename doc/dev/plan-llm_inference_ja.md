@@ -32,7 +32,7 @@
 |-------|------|----------|------|------|
 | **8** | 設定ファイル・モデル管理基盤 | `$HOME/.st6-trainer/config.json`、`models/` ディレクトリ、モデルダウンロード | Phase 0-7 | 完了 |
 | **9** | LLM 推論モジュール (子プロセス + Named Pipe) | `llm_worker.rs`、Named Pipe IPC、モデルロード・推論・ストリーミング | Phase 8 | 完了 |
-| **10** | 構造化 RAG & コンテキストアセンブリ | SQLite からスキャン結果読み取り、handlebars テンプレートでプロンプト組み立て | Phase 9 | 未実装 |
+| **10** | 構造化 RAG & コンテキストアセンブリ | SQLite からスキャン結果読み取り、handlebars テンプレートでプロンプト組み立て | Phase 9 | 完了 |
 | **11** | LLM Tauri コマンド・フロントエンド UI | `llm_infer`/`llm_stream` コマンド、チャット/レポート UI | Phase 9, 10 | 未実装 |
 | **12** | SQLite データベース本格統合 | `match_metadata` テーブル、フレームデータマスター import、試合記録保存、user_version マイグレーション | Phase 0-7 | 未実装 |
 | **13** | フレームデータマスター JSON インポート | `frame_data/*.json` → SQLite `moves` テーブル (差分インポート) | Phase 12 | 未実装 |
@@ -158,22 +158,23 @@ src-tauri/prompts/
 
 ### 作業項目
 
-| # | タスク | ファイル | 内容 |
-|---|--------|----------|------|
-| 10.1 | スキャン結果読み取り | `src-tauri/src/rag.rs` (新規) | SQLite から `match_metadata`, `frame_telemetry`, `input_events`, `move_events` を読み取り |
-| 10.2 | フレームデータ参照 | `src-tauri/src/rag.rs` | SQLite `moves` テーブルからフレームデータを取得 (キャラ名・操作系でフィルタ) |
-| 10.3 | handlebars エンジン初期化 | `src-tauri/src/rag.rs` | テンプレートディレクトリ読み込み、パーシャル登録、ヘルパー関数登録 |
-| 10.4 | コンテキスト組み立て | `src-tauri/src/rag.rs` | 試合メタデータ・テレメトリ・入力・技イベントを構造化データに変換 |
-| 10.5 | プロンプト生成 (被弾分析) | `src-tauri/src/rag.rs` | `analyze_damage.hbs` レンダリング: 状況・入力ミス・フレーム不利・推奨アクション |
-| 10.6 | プロンプト生成 (反撃検証) | `src-tauri/src/rag.rs` | `verify_punish.hbs` レンダリング: 硬直差・発生・リーチ・確定可否・代替手段 |
-| 10.7 | プロンプト生成 (練習メニュー) | `src-tauri/src/rag.rs` | `training_menu.hbs` レンダリング: 反復練習・セットアップ・成功基準・デバイス別操作 |
-| 10.8 | トークン予算管理 | `src-tauri/src/rag.rs` | コンテキストサイズ制限 (ctx_size 考慮)、優先度付き切り詰め |
+| # | タスク | ファイル | 内容 | 状態 |
+|---|--------|----------|------|------|
+| 10.1 | スキャン結果読み取り | `src-tauri/src/db.rs` (新規) | SQLite から `match_metadata`, `frame_telemetry`, `input_events`, `move_events` を読み取り | 完了 |
+| 10.2 | フレームデータ参照 | `src-tauri/src/db.rs` | SQLite `moves` テーブルからフレームデータを取得 (キャラ名・操作系でフィルタ) | 完了 |
+| 10.3 | handlebars エンジン初期化 | `src-tauri/src/rag.rs` (新規) | テンプレートディレクトリ読み込み、パーシャル登録、ヘルパー関数登録 | 完了 |
+| 10.4 | コンテキスト組み立て | `src-tauri/src/rag.rs` | 試合メタデータ・テレメトリ・入力・技イベントを構造化データに変換 | 完了 |
+| 10.5 | プロンプト生成 (被弾分析) | `src-tauri/src/rag.rs` | `analyze_damage.hbs` レンダリング: 状況・入力ミス・フレーム不利・推奨アクション | 完了 |
+| 10.6 | プロンプト生成 (反撃検証) | `src-tauri/src/rag.rs` | `verify_punish.hbs` レンダリング: 硬直差・発生・リーチ・確定可否・代替手段 | 完了 |
+| 10.7 | プロンプト生成 (練習メニュー) | `src-tauri/src/rag.rs` | `training_menu.hbs` レンダリング: 反復練習・セットアップ・成功基準・デバイス別操作 | 完了 |
+| 10.8 | トークン予算管理 | `src-tauri/src/rag.rs` | コンテキストサイズ制限 (ctx_size 考慮)、優先度付き切り詰め | 完了 |
 
 ### 成果物
-- SQLite からのスキャン結果読み取り・構造化
-- handlebars テンプレート群 (ベース・3ユースケース・パーシャル)
-- 日本語プロンプト生成関数 (3種類)
-- トークン予算を考慮したコンテキスト切り詰めロジック
+- SQLite からのスキャン結果読み取り・構造化 (`src-tauri/src/db.rs`)
+- handlebars テンプレート群 (ベース・3ユースケース・パーシャル) (`src-tauri/prompts/`)
+- 日本語プロンプト生成関数 (3種類) (`src-tauri/src/rag.rs`)
+- トークン予算を考慮したコンテキスト切り詰めロジック (`src-tauri/src/rag.rs`)
+- Tauri コマンド 5種: `rag_generate_analyze_damage`, `rag_generate_verify_punish`, `rag_generate_training_menu`, `rag_list_matches`, `rag_get_moves` (`src-tauri/src/commands.rs`)
 
 ---
 
@@ -343,21 +344,21 @@ CREATE INDEX IF NOT EXISTS idx_moves_character_control ON moves(character_id, co
 
 ### 作業項目
 
-| # | タスク | ファイル | 内容 |
-|---|--------|----------|------|
-| 12.1 | データベースパス解決 | `src-tauri/src/paths.rs` | `$HOME/.st6-trainer/st6_trainer.db` 解決、ディレクトリ作成 |
-| 12.2 | 接続プール・WAL モード | `src-tauri/src/db.rs` (新規) | `rusqlite::Connection` 管理、WAL モード有効化、busy_timeout 設定 |
-| 12.3 | スキーマ初期化・マイグレーション | `src-tauri/src/db.rs` | `user_version` チェック、v1 スキーマ適用、将来のマイグレーション関数雛形 |
-| 12.4 | matches テーブル操作 | `src-tauri/src/db.rs` | `insert_match`, `get_match`, `list_matches`, `update_match_result` |
-| 12.5 | スキャン詳細保存 | `src-tauri/src/db.rs` | `save_scan_result` (match_id + telemetry/input/move 一括トランザクション) |
-| 12.6 | 既存パイプライン統合 | `src-tauri/src/pipeline.rs` | `run_pipeline` を `save_scan_result` 呼び出しに置換、match_metadata 挿入 |
-| 12.7 | RAG 用クエリ関数 | `src-tauri/src/db.rs` | `get_match_with_details`, `get_moves_for_character`, `get_recent_matches` |
+| # | タスク | ファイル | 内容 | 状態 |
+|---|--------|----------|------|------|
+| 12.1 | データベースパス解決 | `src-tauri/src/paths.rs` | `$HOME/.st6-trainer/st6_trainer.db` 解決、ディレクトリ作成 | 完了 (Phase 8) |
+| 12.2 | 接続プール・WAL モード | `src-tauri/src/db.rs` | `rusqlite::Connection` 管理、WAL モード有効化、busy_timeout 設定 | 完了 (Phase 10) |
+| 12.3 | スキーマ初期化・マイグレーション | `src-tauri/src/db.rs` | `user_version` チェック、v1 スキーマ適用、将来のマイグレーション関数雛形 | 完了 (Phase 10) |
+| 12.4 | matches テーブル操作 | `src-tauri/src/db.rs` | `insert_match`, `get_match`, `list_matches`, `update_match_result` | 完了 (Phase 10) |
+| 12.5 | スキャン詳細保存 | `src-tauri/src/db.rs` | `save_scan_result` (match_id + telemetry/input/move 一括トランザクション) | 完了 (Phase 10) |
+| 12.6 | 既存パイプライン統合 | `src-tauri/src/pipeline.rs` | `run_pipeline` を `save_scan_result` 呼び出しに置換、match_metadata 挿入 | 未実装 |
+| 12.7 | RAG 用クエリ関数 | `src-tauri/src/db.rs` | `get_match_with_details`, `get_moves_for_character`, `get_recent_matches` | 完了 (Phase 10) |
 
 ### 成果物
 - `st6_trainer.db` のフルスキーマ (v1, user_version 管理)
-- WAL モード・トランザクション対応の DB アクセス層
+- WAL モード・トランザクション対応の DB アクセス層 (`src-tauri/src/db.rs`)
 - 試合記録の保存・取得・一覧機能
-- 既存パイプライン (`scan_video` → `run_pipeline` → DB保存) の完全統合
+- 既存パイプライン (`scan_video` → `run_pipeline` → DB保存) の完全統合 (未実装)
 - RAG フェーズで使用するクエリ関数群
 
 ---
