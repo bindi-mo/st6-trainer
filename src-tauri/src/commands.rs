@@ -194,6 +194,68 @@ pub async fn download_model(
     crate::model_downloader::download_model(&url, &model_file_name, progress).await
 }
 
+// ===== Phase 10: RAG & Context Assembly Commands =====
+
+/// Generate an analyze_damage prompt from a match in SQLite.
+#[tauri::command]
+pub async fn rag_generate_analyze_damage(
+    match_id: String,
+) -> Result<crate::rag::PromptResult, String> {
+    let conn = crate::db::open_db().map_err(|e| e.to_string())?;
+    crate::db::init_schema(&conn).map_err(|e| e.to_string())?;
+
+    let engine = crate::rag::RagEngine::new(&std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("prompts"))
+        .map_err(|e| e.to_string())?;
+    engine.render_analyze_damage(&conn, &match_id)
+}
+
+/// Generate a verify_punish prompt from a match in SQLite.
+#[tauri::command]
+pub async fn rag_generate_verify_punish(
+    match_id: String,
+    guarded_move: String,
+    guard_frame: i32,
+) -> Result<crate::rag::PromptResult, String> {
+    let conn = crate::db::open_db().map_err(|e| e.to_string())?;
+    crate::db::init_schema(&conn).map_err(|e| e.to_string())?;
+
+    let engine = crate::rag::RagEngine::new(&std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("prompts"))
+        .map_err(|e| e.to_string())?;
+    engine.render_verify_punish(&conn, &match_id, &guarded_move, guard_frame)
+}
+
+/// Generate a training_menu prompt from a match in SQLite.
+#[tauri::command]
+pub async fn rag_generate_training_menu(
+    match_id: String,
+) -> Result<crate::rag::PromptResult, String> {
+    let conn = crate::db::open_db().map_err(|e| e.to_string())?;
+    crate::db::init_schema(&conn).map_err(|e| e.to_string())?;
+
+    let engine = crate::rag::RagEngine::new(&std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("prompts"))
+        .map_err(|e| e.to_string())?;
+    engine.render_training_menu(&conn, &match_id)
+}
+
+/// List recent matches from SQLite for RAG context selection.
+#[tauri::command]
+pub async fn rag_list_matches(limit: Option<i32>) -> Result<Vec<crate::db::MatchSummary>, String> {
+    let conn = crate::db::open_db().map_err(|e| e.to_string())?;
+    crate::db::init_schema(&conn).map_err(|e| e.to_string())?;
+    crate::db::list_matches(&conn, limit.unwrap_or(20))
+}
+
+/// Get frame data moves for a character/control type from SQLite.
+#[tauri::command]
+pub async fn rag_get_moves(
+    character_id: String,
+    control_type: String,
+) -> Result<Vec<crate::db::MoveRecord>, String> {
+    let conn = crate::db::open_db().map_err(|e| e.to_string())?;
+    crate::db::init_schema(&conn).map_err(|e| e.to_string())?;
+    crate::db::get_moves_for_character(&conn, &character_id, &control_type)
+}
+
 // ===== Phase 9: LLM Worker Commands =====
 
 /// Global LLM worker instance.

@@ -1,0 +1,16 @@
+### 試合概要
+- 試合ID: {{match_id}}
+- 記録日時: {{played_at}}
+- 自キャラ: {{my_character}} ({{my_control_type}})
+- 敵キャラ: {{opponent_character}} ({{opponent_control_type}})
+- 試合結果: {{result}}
+- 総ラウンド数: {{total_rounds}}
+- 操作デバイス: {{device}}
+
+### ラウンドサマリー
+{{#each rounds}}
+ラウンド {{round_index}}:
+  - 自キャラHP: {{hp_p1_start}} → {{hp_p1_end}}
+  - 敵キャラHP: {{hp_p2_start}} → {{hp_p2_end}}
+  - 結果: {{round_result}}
+{{/each}}

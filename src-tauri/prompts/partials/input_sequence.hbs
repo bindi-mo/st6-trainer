@@ -1,0 +1,7 @@
+### 入力シーケンス (ラウンド {{round_index}}, プレイヤー: {{player}})
+{{#each events}}
+- フレーム {{frame_start}}〜{{frame_end}} (持続: {{hold_frames}}F)
+  - 方向: {{#each directions}}{{this}} {{/each}}
+  - ボタン: {{#each buttons}}{{this}} {{/each}}
+  - 品質フラグ: {{#each quality_flags}}{{this}} {{/each}}
+{{/each}}

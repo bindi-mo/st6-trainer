@@ -1,0 +1,33 @@
+# 確定反撃検証レポート
+
+特定のガード状況において、確定反撃が可能かどうかを検証し、最適な反撃手段を提示してください。
+
+{{> match_context}}
+
+## 検証対象状況
+- ガードした技: {{guarded_move}} (敵キャラ: {{opponent_character}})
+- ガードフレーム: {{guard_frame}}
+- 硬直差 (ガード側): {{block_advantage}}F (マイナス値は不利)
+- 自キャラ: {{my_character}} ({{my_control_type}})
+- 敵キャラ: {{opponent_character}} ({{opponent_control_type}})
+
+## 自キャラの候補反撃技
+{{#each candidate_moves}}
+- {{move_name}}: 発生 {{startup}}F / 有利不利 Block {{block_advantage}}F / ダメージ {{damage}}
+  - 確定可否: {{#if is_punishable}}○ 確定{{else}}× 不可{{/if}}
+  - リーチ: {{reach}} / キャンセル: {{cancel}}
+{{/each}}
+
+## 検証結果
+1. **確定反撃の可否**: ガード後の硬直差を考慮し、確定反撃は可能か
+2. **最適な反撃技**: 発生フレームとダメージのバランスが最も良い技
+3. **代替手段**: 確定反撃が不可能な場合の代替案 (回避、ジャンプ、駆け引き等)
+
+## 結論
+{{#if punish_possible}}
+確定反撃は**可能**です。{{recommended_move}} (発生 {{recommended_startup}}F) が最適な反撃手段です。
+{{else}}
+確定反撃は**不可能**です。ガード後の状況を有利にするための代替手段を検討してください。
+{{/if}}
+
+{{> frame_data_ref character_name=my_character control_type=my_control_type}}

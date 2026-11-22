@@ -1,0 +1,29 @@
+# トレーニングメニュー提示
+
+分析結果に基づき、具体的なトレーニングメニューを提示してください。
+
+{{> match_context}}
+
+## 改善すべき課題
+{{#each issues}}
+### {{title}}
+- 課題: {{description}}
+- 優先度: {{priority}} (高/中/低)
+- 関連技: {{related_moves}}
+{{/each}}
+
+## 提案トレーニングメニュー
+{{#each menus}}
+### {{menu_name}}
+- 目的: {{purpose}}
+- 練習方法: {{method}}
+- 反復回数: {{repetitions}}
+- 成功基準: {{success_criteria}}
+- デバイス別操作 ({{device}}): {{device_notes}}
+{{/each}}
+
+## 練習スケジュール
+- 1セットあたりの目安時間: {{estimated_time}}
+- 1日あたりの推奨セット数: {{recommended_sets}}
+
+{{> frame_data_ref character_name=my_character control_type=my_control_type}}

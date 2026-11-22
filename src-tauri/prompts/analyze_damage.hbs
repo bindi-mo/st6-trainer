@@ -1,0 +1,29 @@
+# 被弾原因分析レポート
+
+以下の試合データに基づき、なぜダメージを受けたのかを分析し、改善策を提示してください。
+
+{{> match_context}}
+
+## 被弾イベント詳細
+{{#each damage_events}}
+### 被弾 #{{@index}}
+- フレーム: {{frame_start}}〜{{frame_end}} (ラウンド {{round_index}})
+- 受けた技: {{opponent_move}} (敵キャラ: {{opponent_character}})
+- 自キャラの状態: {{my_state}}
+- 入力履歴: {{#each my_inputs}}{{this}} {{/each}}
+- フレーム不利: {{frame_disadvantage}}F
+- ダメージ: {{damage}}
+{{/each}}
+
+## 分析項目
+1. **何が起きたか**: 敵のどの技に、どのような状況で被弾したか
+2. **入力ミスの有無**: 入力シーケンスに誤りはあったか (ガードミス、ジャンプミス等)
+3. **フレーム不利分析**: ガード後の硬直差が不利だったか、反撃可能だったか
+4. **根本原因**: 被弾の直接的な原因と、背景にある要因
+
+## 推奨アクション
+- 次回同じ状況で取るべき行動
+- 練習すべき対策技
+- リスク回避のためのアドバイス
+
+{{> frame_data_ref character_name=my_character control_type=my_control_type}}
