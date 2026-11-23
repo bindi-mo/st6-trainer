@@ -35,7 +35,7 @@
 | **10** | 構造化 RAG & コンテキストアセンブリ | SQLite からスキャン結果読み取り、handlebars テンプレートでプロンプト組み立て | Phase 9 | 完了 |
 | **11** | LLM Tauri コマンド・フロントエンド UI | `llm_infer`/`llm_stream` コマンド、チャット/レポート UI | Phase 9, 10 | 完了 |
 | **12** | SQLite データベース本格統合 | `match_metadata` テーブル、フレームデータマスター import、試合記録保存、user_version マイグレーション | Phase 0-7 | 完了 |
-| **13** | フレームデータマスター JSON インポート | `frame_data/*.json` → SQLite `moves` テーブル (差分インポート) | Phase 12 | 未実装 |
+| **13** | フレームデータマスター JSON インポート | `frame_data/*.json` → SQLite `moves` テーブル (差分インポート) | Phase 12 | 完了 |
 | **14** | フロントエンド機能拡張 | キャラ選択、タイムラインナビ、統計ダッシュボード | Phase 11, 12 | 未実装 |
 | **15** | 統合・検証・リリース | E2E テスト、リリースビルド | Phase 8-14 | 未実装 |
 
@@ -407,14 +407,14 @@ CREATE INDEX IF NOT EXISTS idx_moves_character_control ON moves(character_id, co
 
 ### 作業項目
 
-| # | タスク | ファイル | 内容 |
-|---|--------|----------|------|
-| 13.1 | JSON パーサー | `src-tauri/src/frame_data_importer.rs` (新規) | `frame_data/*.json` のパース、スキーマ検証 (必須フィールドチェック) |
-| 13.2 | 差分検出 | `src-tauri/src/frame_data_importer.rs` | ファイル mtime / SHA256 ハッシュ比較、変更分のみ抽出 |
-| 13.3 | SQLite UPSERT | `src-tauri/src/frame_data_importer.rs` | `moves` テーブルへ `INSERT OR REPLACE` (move_id = character_id + control_type + move_name) |
-| 13.4 | クラシック/モダン展開 | `src-tauri/src/frame_data_importer.rs` | `command` オブジェクトから `control_type` 別レコード生成 (classic/modern/modern_manual) |
-| 13.5 | 起動時インポートトリガー | `src-tauri/src/commands.rs` | `import_frame_data` コマンド、手動実行・初回起動時のみ自動実行 |
-| 13.6 | 進捗・ログ | `src-tauri/src/frame_data_importer.rs` | インポート件数・スキップ件数・エラー件数のログ出力、Tauri イベントで進捗通知 |
+| # | タスク | ファイル | 内容 | 状態 |
+|---|--------|----------|------|------|
+| 13.1 | JSON パーサー | `src-tauri/src/frame_data_importer.rs` (新規) | `frame_data/*.json` のパース、スキーマ検証 (必須フィールドチェック) | 完了 |
+| 13.2 | 差分検出 | `src-tauri/src/frame_data_importer.rs` | ファイル mtime / SHA256 ハッシュ比較、変更分のみ抽出 | 完了 |
+| 13.3 | SQLite UPSERT | `src-tauri/src/frame_data_importer.rs` | `moves` テーブルへ `INSERT OR REPLACE` (move_id = character_id + control_type + move_name) | 完了 |
+| 13.4 | クラシック/モダン展開 | `src-tauri/src/frame_data_importer.rs` | `command` オブジェクトから `control_type` 別レコード生成 (classic/modern/modern_manual) | 完了 |
+| 13.5 | 起動時インポートトリガー | `src-tauri/src/commands.rs` | `import_frame_data` コマンド、手動実行・初回起動時のみ自動実行 | 完了 |
+| 13.6 | 進捗・ログ | `src-tauri/src/frame_data_importer.rs` | インポート件数・スキップ件数・エラー件数のログ出力、Tauri イベントで進捗通知 | 完了 |
 
 ### 成果物
 - フレームデータマスター JSON → SQLite 差分インポート (mtime/SHA256 ベース)
