@@ -24,8 +24,13 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .setup(|_app| {
-            // Phase 8: Write default config to $HOME/.st6-trainer/config.json on first launch
-            let _ = crate::config::save_app_config_to_home(&crate::config::AppConfig::default());
+            // Phase 8: Write default config to $HOME/.st6-trainer/config.json on first launch only.
+            // Skip if the file already exists to avoid overwriting user changes.
+            if let Ok(config_path) = crate::paths::resolve_config_path() {
+                if !config_path.exists() {
+                    let _ = crate::config::save_app_config_to_home(&crate::config::AppConfig::default());
+                }
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
