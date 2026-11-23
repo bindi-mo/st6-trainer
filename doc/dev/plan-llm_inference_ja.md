@@ -33,7 +33,7 @@
 | **8** | 設定ファイル・モデル管理基盤 | `$HOME/.st6-trainer/config.json`、`models/` ディレクトリ、モデルダウンロード | Phase 0-7 | 完了 |
 | **9** | LLM 推論モジュール (子プロセス + Named Pipe) | `llm_worker.rs`、Named Pipe IPC、モデルロード・推論・ストリーミング | Phase 8 | 完了 |
 | **10** | 構造化 RAG & コンテキストアセンブリ | SQLite からスキャン結果読み取り、handlebars テンプレートでプロンプト組み立て | Phase 9 | 完了 |
-| **11** | LLM Tauri コマンド・フロントエンド UI | `llm_infer`/`llm_stream` コマンド、チャット/レポート UI | Phase 9, 10 | 未実装 |
+| **11** | LLM Tauri コマンド・フロントエンド UI | `llm_infer`/`llm_stream` コマンド、チャット/レポート UI | Phase 9, 10 | 完了 |
 | **12** | SQLite データベース本格統合 | `match_metadata` テーブル、フレームデータマスター import、試合記録保存、user_version マイグレーション | Phase 0-7 | 未実装 |
 | **13** | フレームデータマスター JSON インポート | `frame_data/*.json` → SQLite `moves` テーブル (差分インポート) | Phase 12 | 未実装 |
 | **14** | フロントエンド機能拡張 | キャラ選択、タイムラインナビ、統計ダッシュボード | Phase 11, 12 | 未実装 |
@@ -194,24 +194,27 @@ src-tauri/prompts/
 
 ### 作業項目
 
-| # | タスク | ファイル | 内容 |
-|---|--------|----------|------|
-| 11.1 | LLM 推論コマンド | `src-tauri/src/commands.rs` | `llm_infer`, `llm_stream`, `llm_worker_status`, `llm_cancel` |
-| 11.2 | コマンド登録 | `src-tauri/src/lib.rs` | `invoke_handler` に新規コマンドを登録 |
-| 11.3 | LLM チャット UI | `src/App.tsx` | チャット形式の推論結果表示、ストリーミング対応 (トークン逐次追加) |
-| 11.4 | レポートビューア | `src/App.tsx` | Markdown レンダラー (`react-markdown` + `remark-gfm`) で分析レポート表示 |
-| 11.5 | モデルダウンロード進捗 | `src/App.tsx` | ダウンロード状態・進捗バー表示、完了時トースト通知 |
-| 11.6 | LLM ワーカー状態表示 | `src/App.tsx` | ヘッダーに `LLM: Ready🟢 / Busy🟡 / Error🔴 / Loading⏳` 表示 |
-| 11.7 | エラー境界・トースト | `src/components/ErrorBoundary.tsx`, `src/hooks/useToast.ts` | ユーザー向けエラー表示・導線 (再試行・設定画面・ログ送信) |
-| 11.8 | LLM UI スタイル | `src/App.css` | チャット/レポート/トースト/進捗バー用スタイル |
+| # | タスク | ファイル | 内容 | 状態 |
+|---|--------|----------|------|------|
+| 11.1 | LLM 推論コマンド | `src-tauri/src/commands.rs` | `llm_infer`, `llm_stream`, `llm_worker_status`, `llm_cancel` | 完了 (Phase 9/10) |
+| 11.2 | コマンド登録 | `src-tauri/src/lib.rs` | `invoke_handler` に新規コマンドを登録 | 完了 (Phase 9/10) |
+| 11.3 | LLM チャット UI | `src/App.tsx` | チャット形式の推論結果表示、ストリーミング対応 (トークン逐次追加) | 完了 |
+| 11.4 | レポートビューア | `src/App.tsx` | Markdown レンダラー (`react-markdown` + `remark-gfm`) で分析レポート表示 | 完了 |
+| 11.5 | モデルダウンロード進捗 | `src/App.tsx` | ダウンロード状態・進捗バー表示、完了時トースト通知 | 完了 |
+| 11.6 | LLM ワーカー状態表示 | `src/App.tsx` | ヘッダーに `LLM: Ready🟢 / Busy🟡 / Error🔴 / Loading⏳` 表示 | 完了 |
+| 11.7 | エラー境界・トースト | `src/components/ErrorBoundary.tsx`, `src/hooks/useToast.ts` | ユーザー向けエラー表示・導線 (再試行・設定画面・ログ送信) | 完了 |
+| 11.8 | LLM UI スタイル | `src/App.css` | チャット/レポート/トースト/進捗バー用スタイル | 完了 |
 
 ### 成果物
-- `llm_infer`/`llm_stream`/`llm_worker_status`/`llm_cancel` Tauri コマンド
+- `llm_infer`/`llm_stream`/`llm_worker_status`/`llm_cancel` Tauri コマンド (Phase 9/10 で実装済み)
 - LLM チャット UI (ストリーミング対応、履歴保持)
 - Markdown レポートビューア (コードブロック・テーブル対応)
 - モデルダウンロード進捗表示・完了通知
 - ワーカー状態インジケーター (ヘッダー常駐)
 - エラー境界・トースト通知システム
+- `src/components/ErrorBoundary.tsx` (新規)
+- `src/hooks/useToast.ts` (新規)
+- `react-markdown` + `remark-gfm` 依存追加
 
 ---
 
