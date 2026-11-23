@@ -183,13 +183,15 @@ pub struct MatchSummary {
     pub total_rounds: i32,
     pub result: String,
     pub source_video_path: Option<String>,
+    pub scan_config_version: Option<String>,
 }
 
 /// List recent matches from the database.
 pub fn list_matches(conn: &Connection, limit: i32) -> Result<Vec<MatchSummary>, String> {
     let mut stmt = conn.prepare(
         "SELECT id, played_at, my_character, opponent_character, my_control_type,
-                opponent_control_type, total_rounds, result, source_video_path
+                opponent_control_type, total_rounds, result, source_video_path,
+                scan_config_version
          FROM matches
          ORDER BY played_at DESC
          LIMIT ?1",
@@ -207,6 +209,7 @@ pub fn list_matches(conn: &Connection, limit: i32) -> Result<Vec<MatchSummary>, 
                 total_rounds: row.get(6)?,
                 result: row.get(7)?,
                 source_video_path: row.get(8)?,
+                scan_config_version: row.get(9)?,
             })
         })
         .map_err(|e| format!("Failed to query matches: {}", e))?;
@@ -223,7 +226,8 @@ pub fn get_match(conn: &Connection, match_id: &str) -> Result<Option<MatchSummar
     let row: Option<MatchSummary> = conn
         .query_row(
             "SELECT id, played_at, my_character, opponent_character, my_control_type,
-                    opponent_control_type, total_rounds, result, source_video_path
+                    opponent_control_type, total_rounds, result, source_video_path,
+                    scan_config_version
              FROM matches WHERE id = ?1",
             [match_id],
             |row| {
@@ -237,6 +241,7 @@ pub fn get_match(conn: &Connection, match_id: &str) -> Result<Option<MatchSummar
                     total_rounds: row.get(6)?,
                     result: row.get(7)?,
                     source_video_path: row.get(8)?,
+                    scan_config_version: row.get(9)?,
                 })
             },
         )
@@ -534,35 +539,23 @@ pub fn get_moves_for_character(
 }
 
 /// Insert a match record (used by pipeline integration).
-pub fn insert_match(
-    conn: &Connection,
-    match_id: &str,
-    played_at: &str,
-    my_character: &str,
-    opponent_character: &str,
-    my_control_type: &str,
-    opponent_control_type: &str,
-    total_rounds: i32,
-    result: &str,
-    source_video_path: Option<&str>,
-    scan_config_version: Option<&str>,
-) -> Result<(), String> {
+pub fn insert_match(conn: &Connection, record: &MatchSummary) -> Result<(), String> {
     conn.execute(
         "INSERT OR REPLACE INTO matches (id, played_at, my_character, opponent_character,
                 my_control_type, opponent_control_type, total_rounds, result,
                 source_video_path, scan_config_version)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
         params![
-            match_id,
-            played_at,
-            my_character,
-            opponent_character,
-            my_control_type,
-            opponent_control_type,
-            total_rounds,
-            result,
-            source_video_path,
-            scan_config_version
+            record.id,
+            record.played_at,
+            record.my_character,
+            record.opponent_character,
+            record.my_control_type,
+            record.opponent_control_type,
+            record.total_rounds,
+            record.result,
+            record.source_video_path,
+            record.scan_config_version
         ],
     )
     .map_err(|e| format!("Failed to insert match: {}", e))?;
@@ -572,16 +565,7 @@ pub fn insert_match(
 /// Save a complete scan result (match + telemetry + inputs + moves) in a transaction.
 pub fn save_scan_result(
     conn: &mut Connection,
-    match_id: &str,
-    played_at: &str,
-    my_character: &str,
-    opponent_character: &str,
-    my_control_type: &str,
-    opponent_control_type: &str,
-    total_rounds: i32,
-    result: &str,
-    source_video_path: Option<&str>,
-    scan_config_version: Option<&str>,
+    record: &MatchSummary,
     telemetry: &[crate::pipeline::JsonlFrameTelemetry],
     inputs: &[crate::pipeline::JsonlInputEvent],
     moves: &[crate::pipeline::JsonlMoveEvent],
@@ -592,16 +576,7 @@ pub fn save_scan_result(
 
     insert_match(
         &tx,
-        match_id,
-        played_at,
-        my_character,
-        opponent_character,
-        my_control_type,
-        opponent_control_type,
-        total_rounds,
-        result,
-        source_video_path,
-        scan_config_version,
+        record,
     )?;
 
     // Insert frame telemetry
@@ -615,7 +590,7 @@ pub fn save_scan_result(
         for t in telemetry {
             let flags = serde_json::to_string(&t.quality_flags).unwrap_or_default();
             stmt.execute(params![
-                match_id,
+                record.id,
                 t.frame_index,
                 t.source_frame_index,
                 t.timestamp_ms,
@@ -649,7 +624,7 @@ pub fn save_scan_result(
             let btns = serde_json::to_string(&e.buttons).unwrap_or_default();
             let flags = serde_json::to_string(&e.quality_flags).unwrap_or_default();
             stmt.execute(params![
-                match_id,
+                record.id,
                 e.frame_start,
                 e.frame_end,
                 e.frame_span_video,
@@ -685,7 +660,7 @@ pub fn save_scan_result(
         for m in moves {
             let flags = serde_json::to_string(&m.quality_flags).unwrap_or_default();
             stmt.execute(params![
-                match_id,
+                record.id,
                 m.frame_start,
                 m.frame_end,
                 m.round_index,
@@ -726,7 +701,7 @@ mod tests {
         let version = get_schema_version(&conn).expect("get_schema_version");
         assert_eq!(version, 0); // not initialized yet
         drop(conn);
-        dir.close();
+        let _ = dir.close();
     }
 
     #[test]
@@ -738,7 +713,7 @@ mod tests {
         let version = get_schema_version(&conn).expect("get_schema_version");
         assert_eq!(version, 1);
         drop(conn);
-        dir.close();
+        let _ = dir.close();
     }
 
     #[test]
@@ -750,16 +725,18 @@ mod tests {
 
         insert_match(
             &conn,
-            "match-001",
-            "2026-01-01T00:00:00Z",
-            "Luke",
-            "Ken",
-            "classic",
-            "modern",
-            3,
-            "WIN",
-            Some("C:\\videos\\match.mkv"),
-            Some("cfg-1.0"),
+            &MatchSummary {
+                id: "match-001".to_string(),
+                played_at: Some("2026-01-01T00:00:00Z".to_string()),
+                my_character: "Luke".to_string(),
+                opponent_character: "Ken".to_string(),
+                my_control_type: "classic".to_string(),
+                opponent_control_type: "modern".to_string(),
+                total_rounds: 3,
+                result: "WIN".to_string(),
+                source_video_path: Some("C:\\videos\\match.mkv".to_string()),
+                scan_config_version: Some("cfg-1.0".to_string()),
+            },
         )
         .expect("insert_match");
 
@@ -777,7 +754,7 @@ mod tests {
         assert!(not_found.is_none());
 
         drop(conn);
-        dir.close();
+        let _ = dir.close();
     }
 
     #[test]
@@ -791,6 +768,6 @@ mod tests {
         assert!(moves.is_empty());
 
         drop(conn);
-        dir.close();
+        let _ = dir.close();
     }
 }

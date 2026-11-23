@@ -14,7 +14,7 @@ use handlebars::Handlebars;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::Path;
 
 /// Prompt generation result.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -127,7 +127,7 @@ pub struct RagEngine {
 
 impl RagEngine {
     /// Create a new RagEngine, loading all templates from the prompts directory.
-    pub fn new(template_dir: &PathBuf) -> Result<Self, String> {
+    pub fn new(template_dir: &Path) -> Result<Self, String> {
         let mut handlebars = Handlebars::new();
 
         // Register base template
@@ -145,7 +145,7 @@ impl RagEngine {
         {
             let entry = entry.map_err(|e| format!("Failed to read dir entry: {}", e))?;
             let path = entry.path();
-            if path.is_file() && path.extension().map_or(false, |e| e == "hbs") {
+            if path.is_file() && path.extension().is_some_and(|e| e == "hbs") {
                 let name = path.file_stem().unwrap().to_string_lossy().to_string();
                 let content = std::fs::read_to_string(&path)
                     .map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
@@ -455,23 +455,23 @@ fn build_damage_events(
 
     for m in move_events {
         // Damage to my character (P2 if I'm P1, etc.) - simplified: look at damage_p2
-        if let Some(damage) = m.damage_p2 {
-            if damage > 0 {
-                events.push(DamageEvent {
-                    frame_start: m.frame_start,
-                    frame_end: m.frame_end,
-                    round_index: m.round_index,
-                    opponent_move: m
-                        .attack_property_p2
-                        .clone()
-                        .unwrap_or_else(|| "Unknown".to_string()),
-                    opponent_character: "Opponent".to_string(),
-                    my_state: "Guard/Hit".to_string(),
-                    my_inputs: Vec::new(),
-                    frame_disadvantage: m.fm_advantage_p2.unwrap_or(0),
-                    damage,
-                });
-            }
+        if let Some(damage) = m.damage_p2
+            && damage > 0
+        {
+            events.push(DamageEvent {
+                frame_start: m.frame_start,
+                frame_end: m.frame_end,
+                round_index: m.round_index,
+                opponent_move: m
+                    .attack_property_p2
+                    .clone()
+                    .unwrap_or_else(|| "Unknown".to_string()),
+                opponent_character: "Opponent".to_string(),
+                my_state: "Guard/Hit".to_string(),
+                my_inputs: Vec::new(),
+                frame_disadvantage: m.fm_advantage_p2.unwrap_or(0),
+                damage,
+            });
         }
     }
 
@@ -487,19 +487,19 @@ fn build_training_issues(
 
     // Look for moves with negative advantage (punishable)
     for m in move_events {
-        if let Some(adv) = m.fm_advantage_p1 {
-            if adv < -5 {
-                issues.push(TrainingIssue {
-                    title: format!("フレーム不利技 (ラウンド {})", m.round_index),
-                    description: format!(
-                        "発生 {}F の技が {}F 不利でした。ガード後反撃を避けるための対策が必要です。",
-                        m.fm_startup_p1.unwrap_or(0),
-                        adv.abs()
-                    ),
-                    priority: "高".to_string(),
-                    related_moves: m.attack_property_p1.clone().unwrap_or_else(|| "Unknown".to_string()),
-                });
-            }
+        if let Some(adv) = m.fm_advantage_p1
+            && adv < -5
+        {
+            issues.push(TrainingIssue {
+                title: format!("フレーム不利技 (ラウンド {})", m.round_index),
+                description: format!(
+                    "発生 {}F の技が {}F 不利でした。ガード後反撃を避けるための対策が必要です。",
+                    m.fm_startup_p1.unwrap_or(0),
+                    adv.abs()
+                ),
+                priority: "高".to_string(),
+                related_moves: m.attack_property_p1.clone().unwrap_or_else(|| "Unknown".to_string()),
+            });
         }
     }
 
