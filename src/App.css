@@ -1,3 +1,7 @@
+body {
+  margin: 0
+}
+
 .logo.vite:hover {
   filter: drop-shadow(0 0 2em #747bff);
 }
@@ -23,7 +27,6 @@
 
 .container {
   margin: 0;
-  padding-top: 10vh;
   display: flex;
   flex-direction: column;
   justify-content: center;
@@ -345,13 +348,13 @@ button:disabled {
 
 .header-title h1 {
   margin: 0;
-  font-size: 1.25rem;
-  color: #111827;
+  font-size: 1.75rem;
+  color: #f0f0f0;
 }
 
 .header-title .header-subtitle {
   font-size: 0.85rem;
-  color: #6b7280;
+  color: #a8b4cc;
 }
 
 .header-controls {

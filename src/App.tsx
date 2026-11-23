@@ -1,12 +1,12 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
-import { useState, useEffect, useRef } from "react";
-import { ErrorBoundary } from "./components/ErrorBoundary";
-import { useToast } from "./hooks/useToast";
+import { useEffect, useRef, useState } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import "./App.css";
+import { ErrorBoundary } from "./components/ErrorBoundary";
+import { useToast } from "./hooks/useToast";
 
 interface VideoScanResult {
   video_path: string;
@@ -392,7 +392,7 @@ function App() {
     <main className="container">
       <header className="app-header">
         <div className="header-title">
-          <h1>ST6-Trainer - SF6 AI Trainer</h1>
+          <h1>ST6 Trainer</h1>
           <div className="header-subtitle">Street Fighter 6 対戦分析・トレーニング支援</div>
         </div>
         <div className="header-controls">
