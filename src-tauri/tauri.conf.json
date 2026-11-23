@@ -34,6 +34,8 @@
       "st6_scanner.dll",
       "config/*.json",
       "templates/**/*",
+      "scripts/requirements.txt",
+      "scripts/extract_templates.py",
       "scripts/sf6_frame_data_processor.py",
       "frame_data/*.json"
     ]
