@@ -34,7 +34,7 @@
 | **9** | LLM 推論モジュール (子プロセス + Named Pipe) | `llm_worker.rs`、Named Pipe IPC、モデルロード・推論・ストリーミング | Phase 8 | 完了 |
 | **10** | 構造化 RAG & コンテキストアセンブリ | SQLite からスキャン結果読み取り、handlebars テンプレートでプロンプト組み立て | Phase 9 | 完了 |
 | **11** | LLM Tauri コマンド・フロントエンド UI | `llm_infer`/`llm_stream` コマンド、チャット/レポート UI | Phase 9, 10 | 完了 |
-| **12** | SQLite データベース本格統合 | `match_metadata` テーブル、フレームデータマスター import、試合記録保存、user_version マイグレーション | Phase 0-7 | 未実装 |
+| **12** | SQLite データベース本格統合 | `match_metadata` テーブル、フレームデータマスター import、試合記録保存、user_version マイグレーション | Phase 0-7 | 完了 |
 | **13** | フレームデータマスター JSON インポート | `frame_data/*.json` → SQLite `moves` テーブル (差分インポート) | Phase 12 | 未実装 |
 | **14** | フロントエンド機能拡張 | キャラ選択、タイムラインナビ、統計ダッシュボード | Phase 11, 12 | 未実装 |
 | **15** | 統合・検証・リリース | E2E テスト、リリースビルド | Phase 8-14 | 未実装 |
@@ -354,14 +354,14 @@ CREATE INDEX IF NOT EXISTS idx_moves_character_control ON moves(character_id, co
 | 12.3 | スキーマ初期化・マイグレーション | `src-tauri/src/db.rs` | `user_version` チェック、v1 スキーマ適用、将来のマイグレーション関数雛形 | 完了 (Phase 10) |
 | 12.4 | matches テーブル操作 | `src-tauri/src/db.rs` | `insert_match`, `get_match`, `list_matches`, `update_match_result` | 完了 (Phase 10) |
 | 12.5 | スキャン詳細保存 | `src-tauri/src/db.rs` | `save_scan_result` (match_id + telemetry/input/move 一括トランザクション) | 完了 (Phase 10) |
-| 12.6 | 既存パイプライン統合 | `src-tauri/src/pipeline.rs` | `run_pipeline` を `save_scan_result` 呼び出しに置換、match_metadata 挿入 | 未実装 |
+| 12.6 | 既存パイプライン統合 | `src-tauri/src/pipeline.rs` | `run_pipeline` を `save_scan_result` 呼び出しに置換、match_metadata 挿入 | 完了 |
 | 12.7 | RAG 用クエリ関数 | `src-tauri/src/db.rs` | `get_match_with_details`, `get_moves_for_character`, `get_recent_matches` | 完了 (Phase 10) |
 
 ### 成果物
 - `st6_trainer.db` のフルスキーマ (v1, user_version 管理)
 - WAL モード・トランザクション対応の DB アクセス層 (`src-tauri/src/db.rs`)
 - 試合記録の保存・取得・一覧機能
-- 既存パイプライン (`scan_video` → `run_pipeline` → DB保存) の完全統合 (未実装)
+- 既存パイプライン (`scan_video` → `run_pipeline` → DB保存) の完全統合
 - RAG フェーズで使用するクエリ関数群
 
 ---

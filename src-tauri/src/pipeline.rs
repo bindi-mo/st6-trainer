@@ -3,10 +3,8 @@
 //! Reads scanner output (FrameTelemetry, InputEvent, MoveEvent) as JSONL,
 //! validates invariants per §7.5, and writes to a SQLite database.
 
-use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
-use std::fs;
 use std::path::Path;
 
 /// Invariant check result
@@ -109,6 +107,7 @@ pub struct JsonlMoveEvent {
 /// # Errors
 /// Returns a String error if invariant checks fail or DB write fails.
 pub fn run_pipeline(
+    match_record: &crate::db::MatchSummary,
     telemetry_jsonl: &str,
     input_jsonl: &str,
     move_jsonl: &str,
@@ -133,8 +132,13 @@ pub fn run_pipeline(
         violations,
     };
 
-    // Write to SQLite (if rusqlite is available; otherwise write JSONL summary)
-    write_sqlite(db_path, &telemetry, &inputs, &moves)?;
+    // Write to SQLite using the v1 schema via save_scan_result (Phase 12 integration)
+    let mut conn = crate::db::open_db_at(db_path)
+        .map_err(|e| format!("Failed to open database: {}", e))?;
+    crate::db::init_schema(&conn)
+        .map_err(|e| format!("Failed to initialize schema: {}", e))?;
+    crate::db::save_scan_result(&mut conn, match_record, &telemetry, &inputs, &moves)
+        .map_err(|e| format!("Failed to save scan result: {}", e))?;
 
     Ok(result)
 }
@@ -261,193 +265,6 @@ pub fn check_schema_invariants(
     }
 }
 
-/// Write records to SQLite database
-fn write_sqlite(
-    db_path: &Path,
-    telemetry: &[JsonlFrameTelemetry],
-    inputs: &[JsonlInputEvent],
-    moves: &[JsonlMoveEvent],
-) -> Result<(), String> {
-    // Create parent directory if needed
-    if let Some(parent) = db_path.parent() {
-        fs::create_dir_all(parent).map_err(|e| format!("Failed to create dir: {}", e))?;
-    }
-
-    let conn = Connection::open(db_path).map_err(|e| format!("Failed to open SQLite: {}", e))?;
-
-    // Create tables
-    conn.execute_batch(
-        "CREATE TABLE IF NOT EXISTS match_metadata (
-            match_id TEXT PRIMARY KEY,
-            character_name_p1 TEXT,
-            character_name_p2 TEXT,
-            control_type_p1 TEXT,
-            control_type_p2 TEXT,
-            detected_at_frame INTEGER,
-            source_resolution TEXT,
-            source_fps REAL,
-            canonical_raster_w INTEGER,
-            canonical_raster_h INTEGER,
-            top_y_offset_px INTEGER,
-            bottom_y_offset_px INTEGER,
-            offset_snapped INTEGER,
-            manual_verified INTEGER,
-            input_history_available INTEGER,
-            attack_property_locale TEXT,
-            extracted_at_utc TEXT,
-            config_version TEXT,
-            template_pack_version TEXT,
-            extractor_version TEXT
-        );
-        CREATE TABLE IF NOT EXISTS frame_telemetry (
-            frame_index INTEGER,
-            source_frame_index INTEGER,
-            timestamp_ms INTEGER,
-            round_index INTEGER,
-            hp_reset INTEGER,
-            hp_p1 REAL,
-            drive_p1 REAL,
-            sa_p1 INTEGER,
-            in_burnout_p1 INTEGER,
-            hp_p2 REAL,
-            drive_p2 REAL,
-            sa_p2 INTEGER,
-            in_burnout_p2 INTEGER,
-            quality_flags TEXT
-        );
-        CREATE TABLE IF NOT EXISTS input_events (
-            frame_start INTEGER,
-            frame_end INTEGER,
-            frame_span_video INTEGER,
-            hold_frames INTEGER,
-            counter_clipped INTEGER,
-            hold_frames_lower_bound INTEGER,
-            time_dilation_suspected INTEGER,
-            resync_used INTEGER,
-            unknown_glyph INTEGER,
-            is_preround INTEGER,
-            player TEXT,
-            round_index INTEGER,
-            event_index INTEGER,
-            directions TEXT,
-            buttons TEXT,
-            quality_flags TEXT
-        );
-        CREATE TABLE IF NOT EXISTS move_events (
-            frame_start INTEGER,
-            frame_end INTEGER,
-            round_index INTEGER,
-            fm_startup_p1 INTEGER,
-            fm_total_p1 INTEGER,
-            fm_advantage_p1 INTEGER,
-            fm_startup_p2 INTEGER,
-            fm_total_p2 INTEGER,
-            fm_advantage_p2 INTEGER,
-            damage_p1 INTEGER,
-            combo_damage_p1 INTEGER,
-            damage_p2 INTEGER,
-            combo_damage_p2 INTEGER,
-            attack_property_p1 TEXT,
-            attack_property_p2 TEXT,
-            attack_property_locale TEXT,
-            conf REAL,
-            quality_flags TEXT
-        );",
-    )
-    .map_err(|e| format!("Failed to create tables: {}", e))?;
-
-    // Insert telemetry
-    let mut stmt = conn.prepare(
-        "INSERT INTO frame_telemetry (frame_index, source_frame_index, timestamp_ms, round_index, hp_reset, hp_p1, drive_p1, sa_p1, in_burnout_p1, hp_p2, drive_p2, sa_p2, in_burnout_p2, quality_flags)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
-    ).map_err(|e| format!("Failed to prepare telemetry insert: {}", e))?;
-    for t in telemetry {
-        let flags = serde_json::to_string(&t.quality_flags).unwrap_or_default();
-        stmt.execute(params![
-            t.frame_index,
-            t.source_frame_index,
-            t.timestamp_ms,
-            t.round_index,
-            t.hp_reset,
-            t.hp_p1,
-            t.drive_p1,
-            t.sa_p1,
-            t.in_burnout_p1,
-            t.hp_p2,
-            t.drive_p2,
-            t.sa_p2,
-            t.in_burnout_p2,
-            flags
-        ])
-        .map_err(|e| format!("Failed to insert telemetry: {}", e))?;
-    }
-    drop(stmt);
-
-    // Insert input events
-    let mut stmt = conn.prepare(
-        "INSERT INTO input_events (frame_start, frame_end, frame_span_video, hold_frames, counter_clipped, hold_frames_lower_bound, time_dilation_suspected, resync_used, unknown_glyph, is_preround, player, round_index, event_index, directions, buttons, quality_flags)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
-    ).map_err(|e| format!("Failed to prepare input insert: {}", e))?;
-    for e in inputs {
-        let dirs = serde_json::to_string(&e.directions).unwrap_or_default();
-        let btns = serde_json::to_string(&e.buttons).unwrap_or_default();
-        let flags = serde_json::to_string(&e.quality_flags).unwrap_or_default();
-        stmt.execute(params![
-            e.frame_start,
-            e.frame_end,
-            e.frame_span_video,
-            e.hold_frames,
-            e.counter_clipped,
-            e.hold_frames_lower_bound,
-            e.time_dilation_suspected,
-            e.resync_used,
-            e.unknown_glyph,
-            e.is_preround,
-            e.player,
-            e.round_index,
-            e.event_index,
-            dirs,
-            btns,
-            flags
-        ])
-        .map_err(|e| format!("Failed to insert input event: {}", e))?;
-    }
-    drop(stmt);
-
-    // Insert move events
-    let mut stmt = conn.prepare(
-        "INSERT INTO move_events (frame_start, frame_end, round_index, fm_startup_p1, fm_total_p1, fm_advantage_p1, fm_startup_p2, fm_total_p2, fm_advantage_p2, damage_p1, combo_damage_p1, damage_p2, combo_damage_p2, attack_property_p1, attack_property_p2, attack_property_locale, conf, quality_flags)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
-    ).map_err(|e| format!("Failed to prepare move insert: {}", e))?;
-    for m in moves {
-        let flags = serde_json::to_string(&m.quality_flags).unwrap_or_default();
-        stmt.execute(params![
-            m.frame_start,
-            m.frame_end,
-            m.round_index,
-            m.fm_startup_p1,
-            m.fm_total_p1,
-            m.fm_advantage_p1,
-            m.fm_startup_p2,
-            m.fm_total_p2,
-            m.fm_advantage_p2,
-            m.damage_p1,
-            m.combo_damage_p1,
-            m.damage_p2,
-            m.combo_damage_p2,
-            m.attack_property_p1,
-            m.attack_property_p2,
-            m.attack_property_locale,
-            m.conf,
-            flags
-        ])
-        .map_err(|e| format!("Failed to insert move event: {}", e))?;
-    }
-    drop(stmt);
-
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -567,12 +384,33 @@ mod tests {
 
     #[test]
     fn test_run_pipeline_all_valid() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let db_path = dir.path().join("test_pipeline.db");
         let telemetry = r#"{"frame_index":0,"hp_p1":1.0,"hp_p2":1.0,"drive_p1":6.0,"drive_p2":6.0,"sa_p1":3,"sa_p2":3}"#;
         let inputs = r#"{"frame_start":0,"frame_end":5,"player":"P1","round_index":1,"event_index":0,"directions":["6"],"buttons":[]}"#;
         let moves = r#"{"frame_start":0,"frame_end":10,"round_index":1,"fm_startup_p1":5,"fm_total_p1":15,"fm_advantage_p1":0,"fm_startup_p2":5,"fm_total_p2":15,"fm_advantage_p2":0}"#;
-        let result =
-            run_pipeline(telemetry, inputs, moves, Path::new("/tmp/test_pipeline.db")).unwrap();
+        let match_record = crate::db::MatchSummary {
+            id: "test-match".to_string(),
+            played_at: Some("2026-01-01T00:00:00Z".to_string()),
+            my_character: "Luke".to_string(),
+            opponent_character: "Ken".to_string(),
+            my_control_type: "classic".to_string(),
+            opponent_control_type: "modern".to_string(),
+            total_rounds: 3,
+            result: "WIN".to_string(),
+            source_video_path: Some("C:\\videos\\match.mkv".to_string()),
+            scan_config_version: Some("cfg-1.0".to_string()),
+        };
+        let result = run_pipeline(
+            &match_record,
+            telemetry,
+            inputs,
+            moves,
+            &db_path,
+        )
+        .unwrap();
         assert!(result.passed);
         assert!(result.violations.is_empty());
+        drop(dir);
     }
 }

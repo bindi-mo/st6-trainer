@@ -6,7 +6,7 @@
 use crate::paths;
 use rusqlite::{Connection, params, OptionalExtension};
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::Path;
 
 /// Open (or create) the application SQLite database with WAL mode and busy timeout.
 pub fn open_db() -> Result<Connection, String> {
@@ -27,7 +27,7 @@ pub fn open_db() -> Result<Connection, String> {
 }
 
 /// Open a database at a specific path (used by tests and pipeline integration).
-pub fn open_db_at(path: &PathBuf) -> Result<Connection, String> {
+pub fn open_db_at(path: &Path) -> Result<Connection, String> {
     let conn = Connection::open(path).map_err(|e| {
         format!("Failed to open SQLite database {}: {}", path.display(), e)
     })?;

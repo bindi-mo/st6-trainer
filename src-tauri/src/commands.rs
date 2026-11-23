@@ -77,14 +77,34 @@ pub async fn scan_video(
         .collect::<Vec<_>>()
         .join("\n");
 
-    // Run invariant pipeline
+    // Build match metadata record for DB insertion
+    let match_record = crate::db::MatchSummary {
+        id: metadata_out.match_id.clone(),
+        played_at: Some(metadata_out.extracted_at_utc.clone()),
+        my_character: metadata_out.character_name_p1.clone(),
+        opponent_character: metadata_out.character_name_p2.clone(),
+        my_control_type: metadata_out.control_type_p1.clone(),
+        opponent_control_type: metadata_out.control_type_p2.clone(),
+        total_rounds: 0,
+        result: String::new(),
+        source_video_path: Some(video_path.clone()),
+        scan_config_version: Some(metadata_out.config_version.clone()),
+    };
+
+    // Run invariant pipeline (writes to SQLite via save_scan_result)
     let db_path = match &output_dir {
         Some(dir) => PathBuf::from(dir).join("extraction.db"),
         None => PathBuf::from("extraction.db"),
     };
 
-    let invariant_result = run_pipeline(&telemetry_jsonl, &input_jsonl, &move_jsonl, &db_path)
-        .map_err(|e| e.to_string())?;
+    let invariant_result = run_pipeline(
+        &match_record,
+        &telemetry_jsonl,
+        &input_jsonl,
+        &move_jsonl,
+        &db_path,
+    )
+    .map_err(|e| e.to_string())?;
 
     Ok(ScanResult {
         metadata: metadata_out,
