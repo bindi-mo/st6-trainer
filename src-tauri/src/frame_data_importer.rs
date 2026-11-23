@@ -5,9 +5,9 @@
 //! Each move is expanded into one record per control type
 //! (classic / modern / modern_manual).
 
-use crate::db::{init_schema, open_db, upsert_move, MoveRecord};
+use crate::db::{MoveRecord, init_schema, open_db, upsert_move};
 use crate::paths::{resolve_bundled_frame_data_dir, resolve_frame_data_dir};
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -123,7 +123,8 @@ fn parse_opt_i32(s: &str) -> Option<i32> {
 
 /// Compute SHA256 hash of a file.
 fn sha256_file(path: &Path) -> Result<String, String> {
-    let content = fs::read(path).map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
+    let content =
+        fs::read(path).map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
     let mut hasher = Sha256::new();
     hasher.update(&content);
     Ok(format!("{:x}", hasher.finalize()))
@@ -131,14 +132,14 @@ fn sha256_file(path: &Path) -> Result<String, String> {
 
 /// Get file mtime as epoch seconds.
 fn file_mtime(path: &Path) -> Result<u64, String> {
-    let meta = fs::metadata(path).map_err(|e| format!("Failed to stat {}: {}", path.display(), e))?;
-    Ok(
-        meta.modified()
-            .map_err(|e| format!("Failed to read mtime for {}: {}", path.display(), e))?
-            .duration_since(UNIX_EPOCH)
-            .map_err(|e| format!("Invalid mtime for {}: {}", path.display(), e))?
-            .as_secs(),
-    )
+    let meta =
+        fs::metadata(path).map_err(|e| format!("Failed to stat {}: {}", path.display(), e))?;
+    Ok(meta
+        .modified()
+        .map_err(|e| format!("Failed to read mtime for {}: {}", path.display(), e))?
+        .duration_since(UNIX_EPOCH)
+        .map_err(|e| format!("Invalid mtime for {}: {}", path.display(), e))?
+        .as_secs())
 }
 
 /// Build a MoveRecord from a JSON move and control type.
@@ -192,20 +193,12 @@ fn derive_category(move_name: &str) -> String {
     let name = move_name.to_lowercase();
     if name.contains("throw") || name.contains("投げ") {
         "Throw".to_string()
-    } else if name.contains("drive rush")
-        || name.contains("drive impact")
-        || name.contains("parry")
+    } else if name.contains("drive rush") || name.contains("drive impact") || name.contains("parry")
     {
         "System".to_string()
-    } else if name.contains("super art")
-        || name.contains("critical art")
-        || name.contains(" sa ")
-    {
+    } else if name.contains("super art") || name.contains("critical art") || name.contains(" sa ") {
         "Super Art".to_string()
-    } else if name.contains("standing")
-        || name.contains("crouching")
-        || name.contains("jumping")
-    {
+    } else if name.contains("standing") || name.contains("crouching") || name.contains("jumping") {
         "Normal".to_string()
     } else if name.contains("special") || name.contains("unique") {
         "Special".to_string()
@@ -299,10 +292,12 @@ pub fn import_frame_data(app: Option<&tauri::AppHandle>) -> Result<ImportStats, 
 
     // Collect JSON files
     let mut json_files: Vec<PathBuf> = Vec::new();
-    for entry in fs::read_dir(&bundled_dir).map_err(|e| format!("Failed to read frame_data dir: {}", e))? {
+    for entry in
+        fs::read_dir(&bundled_dir).map_err(|e| format!("Failed to read frame_data dir: {}", e))?
+    {
         let entry = entry.map_err(|e| format!("Failed to read dir entry: {}", e))?;
         let path = entry.path();
-        if path.extension().map_or(false, |ext| ext == "json") {
+        if path.extension().is_some_and(|ext| ext == "json") {
             json_files.push(path);
         }
     }
@@ -333,11 +328,12 @@ pub fn import_frame_data(app: Option<&tauri::AppHandle>) -> Result<ImportStats, 
         };
 
         // Check if already imported with same hash and mtime
-        if let Some(prev) = import_log.get(&file_name) {
-            if prev.sha256 == current_sha256 && prev.mtime_secs == current_mtime {
-                stats.files_skipped += 1;
-                continue;
-            }
+        if let Some(prev) = import_log.get(&file_name)
+            && prev.sha256 == current_sha256
+            && prev.mtime_secs == current_mtime
+        {
+            stats.files_skipped += 1;
+            continue;
         }
 
         // Parse the JSON file
@@ -368,14 +364,14 @@ pub fn import_frame_data(app: Option<&tauri::AppHandle>) -> Result<ImportStats, 
                     move_data,
                     ct,
                 );
-                upsert_move(&tx, &record).map_err(|e| {
-                    format!("Failed to upsert move {}: {}", record.move_id, e)
-                })?;
+                upsert_move(&tx, &record)
+                    .map_err(|e| format!("Failed to upsert move {}: {}", record.move_id, e))?;
                 file_move_count += 1;
             }
         }
 
-        tx.commit().map_err(|e| format!("Failed to commit transaction: {}", e))?;
+        tx.commit()
+            .map_err(|e| format!("Failed to commit transaction: {}", e))?;
 
         // Update import log
         let entry = ImportLogEntry {
@@ -391,12 +387,15 @@ pub fn import_frame_data(app: Option<&tauri::AppHandle>) -> Result<ImportStats, 
 
         // Emit progress event
         if let Some(app) = app {
-            let _ = app.emit("frame-data-import-progress", serde_json::json!({
-                "file_name": file_name,
-                "moves_imported": file_move_count,
-                "files_imported": stats.files_imported,
-                "files_scanned": stats.files_scanned,
-            }));
+            let _ = app.emit(
+                "frame-data-import-progress",
+                serde_json::json!({
+                    "file_name": file_name,
+                    "moves_imported": file_move_count,
+                    "files_imported": stats.files_imported,
+                    "files_scanned": stats.files_scanned,
+                }),
+            );
         }
     }
 
@@ -476,7 +475,10 @@ mod tests {
         assert_eq!(record.block_advantage, "-3");
         assert_eq!(record.cancel, "C");
         assert_eq!(record.damage, "300");
-        assert_eq!(record.combo_scaling, Some("Starter scaling 20%".to_string()));
+        assert_eq!(
+            record.combo_scaling,
+            Some("Starter scaling 20%".to_string())
+        );
         assert_eq!(record.drive_gauge_gain_hit, Some(250));
         assert_eq!(record.drive_gauge_lose_dguard, Some(-500));
         assert_eq!(record.drive_gauge_lose_punish, Some(-2000));
@@ -485,7 +487,8 @@ mod tests {
         assert_eq!(record.category, "Normal");
 
         // Modern control type uses different command
-        let record_modern = build_move_record("luke", "LUKE", "sf6-ui-2026.11", &move_data, "modern");
+        let record_modern =
+            build_move_record("luke", "LUKE", "sf6-ui-2026.11", &move_data, "modern");
         assert_eq!(record_modern.move_id, "luke-modern-Standing Light Punch");
         assert_eq!(record_modern.command, "[L]");
         assert_eq!(record_modern.control_type, "modern");
@@ -538,7 +541,8 @@ mod tests {
 
         // We can't easily test import_frame_data because it reads from bundled dir.
         // Instead verify the DB operations work.
-        let moves = crate::db::get_moves_for_character(&conn, "luke", "classic").expect("get_moves");
+        let moves =
+            crate::db::get_moves_for_character(&conn, "luke", "classic").expect("get_moves");
         assert!(moves.is_empty());
 
         drop(conn);
@@ -547,9 +551,12 @@ mod tests {
 
     /// Open a DB at a specific path for testing (mirrors db.rs open_db_at).
     fn open_db_at_for_test(path: &Path) -> Result<Connection, String> {
-        let conn = Connection::open(path).map_err(|e| format!("Failed to open {}: {}", path.display(), e))?;
-        conn.execute_batch("PRAGMA journal_mode=WAL;").map_err(|e| format!("Failed to set WAL: {}", e))?;
-        conn.execute_batch("PRAGMA busy_timeout=5000;").map_err(|e| format!("Failed to set busy_timeout: {}", e))?;
+        let conn = Connection::open(path)
+            .map_err(|e| format!("Failed to open {}: {}", path.display(), e))?;
+        conn.execute_batch("PRAGMA journal_mode=WAL;")
+            .map_err(|e| format!("Failed to set WAL: {}", e))?;
+        conn.execute_batch("PRAGMA busy_timeout=5000;")
+            .map_err(|e| format!("Failed to set busy_timeout: {}", e))?;
         Ok(conn)
     }
 }
