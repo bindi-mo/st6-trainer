@@ -23,6 +23,11 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .setup(|_app| {
+            // Phase 8: Write default config to $HOME/.st6-trainer/config.json on first launch
+            let _ = crate::config::save_app_config_to_home(&crate::config::AppConfig::default());
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             greet,
             commands::scan_video,
