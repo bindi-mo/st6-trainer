@@ -214,9 +214,20 @@ pub async fn download_model(
     crate::model_downloader::download_model(&url, &model_file_name, progress).await
 }
 
-// ===== Phase 10: RAG & Context Assembly Commands =====
+// ===== Phase 13: Frame Data Master JSON Import Commands =====
 
-/// Generate an analyze_damage prompt from a match in SQLite.
+/// Import frame data master JSON files into the SQLite `moves` table.
+///
+/// Performs differential import: only files whose mtime or SHA256 hash
+/// have changed since the last import are processed.
+#[tauri::command]
+pub async fn import_frame_data(
+    app: tauri::AppHandle,
+) -> Result<crate::frame_data_importer::ImportStats, String> {
+    crate::frame_data_importer::import_frame_data(Some(&app))
+}
+
+// ===== Phase 10: RAG & Context Assembly Commands =====
 #[tauri::command]
 pub async fn rag_generate_analyze_damage(
     match_id: String,

@@ -3,6 +3,7 @@
 pub mod commands;
 pub mod config;
 pub mod db;
+pub mod frame_data_importer;
 pub mod llm_protocol;
 pub mod llm_worker;
 pub mod model_downloader;
@@ -56,6 +57,8 @@ pub fn run() {
             commands::rag_generate_training_menu,
             commands::rag_list_matches,
             commands::rag_get_moves,
+            // Phase 13: Frame data master JSON import
+            commands::import_frame_data,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

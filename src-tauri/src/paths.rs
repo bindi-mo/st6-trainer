@@ -5,6 +5,7 @@
 //! - `models/` — LLM GGUF model files
 //! - `st6_trainer.db` — SQLite structured match database
 
+use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -12,6 +13,7 @@ const APP_DIR_NAME: &str = ".st6-trainer";
 const CONFIG_FILE_NAME: &str = "config.json";
 const MODELS_DIR_NAME: &str = "models";
 const DB_FILE_NAME: &str = "st6_trainer.db";
+const FRAME_DATA_DIR_NAME: &str = "frame_data";
 
 /// Resolve the application data directory: `$HOME/.st6-trainer/`.
 ///
@@ -55,6 +57,38 @@ pub fn resolve_config_path() -> Result<PathBuf, String> {
 pub fn resolve_models_dir() -> Result<PathBuf, String> {
     let app_dir = resolve_app_data_dir()?;
     Ok(app_dir.join(MODELS_DIR_NAME))
+}
+
+/// Resolve the frame data directory path: `$HOME/.st6-trainer/frame_data/`.
+///
+/// Creates the directory if it does not exist.
+pub fn resolve_frame_data_dir() -> Result<PathBuf, String> {
+    let app_dir = resolve_app_data_dir()?;
+    let frame_data_dir = app_dir.join(FRAME_DATA_DIR_NAME);
+    fs::create_dir_all(&frame_data_dir).map_err(|e| {
+        format!(
+            "Failed to create frame_data directory {}: {}",
+            frame_data_dir.display(),
+            e
+        )
+    })?;
+    Ok(frame_data_dir)
+}
+
+/// Resolve the bundled frame data directory path: `src-tauri/frame_data/`.
+///
+/// Used during development to locate the source JSON files before they are
+/// copied into `$HOME/.st6-trainer/frame_data/`.
+pub fn resolve_bundled_frame_data_dir() -> Result<PathBuf, String> {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let bundled = manifest_dir.join(FRAME_DATA_DIR_NAME);
+    if !bundled.exists() {
+        return Err(format!(
+            "Bundled frame_data directory not found: {}",
+            bundled.display()
+        ));
+    }
+    Ok(bundled)
 }
 
 /// Resolve the SQLite database path: `$HOME/.st6-trainer/st6_trainer.db`.
@@ -134,5 +168,19 @@ mod tests {
         let dir = resolve_app_data_dir().expect("resolve_app_data_dir failed");
         let result = validate_path(&dir, "app data dir");
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_resolve_frame_data_dir_creates_directory() {
+        let dir = resolve_frame_data_dir().expect("resolve_frame_data_dir failed");
+        assert!(dir.exists(), "frame_data dir should exist: {}", dir.display());
+        assert!(dir.ends_with(FRAME_DATA_DIR_NAME));
+    }
+
+    #[test]
+    fn test_resolve_bundled_frame_data_dir_exists() {
+        let dir = resolve_bundled_frame_data_dir().expect("resolve_bundled_frame_data_dir failed");
+        assert!(dir.exists(), "bundled frame_data dir should exist: {}", dir.display());
+        assert!(dir.ends_with(FRAME_DATA_DIR_NAME));
     }
 }

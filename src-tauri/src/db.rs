@@ -688,6 +688,48 @@ pub fn save_scan_result(
     Ok(())
 }
 
+/// Upsert a single move record into the `moves` table.
+///
+/// Uses `INSERT OR REPLACE` keyed on `move_id` (character_id + control_type + move_name).
+pub fn upsert_move(conn: &Connection, record: &MoveRecord) -> Result<(), String> {
+    conn.execute(
+        "INSERT OR REPLACE INTO moves (
+                move_id, character_id, character_name, control_type, version, move_name,
+                category, command, startup, active, recovery, hit_advantage, block_advantage,
+                cancel, damage, combo_scaling, drive_gauge_gain_hit, drive_gauge_lose_dguard,
+                drive_gauge_lose_punish, sa_gauge_gain, attribute, note
+             )
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
+                     ?17, ?18, ?19, ?20, ?21, ?22)",
+        params![
+            record.move_id,
+            record.character_id,
+            record.character_name,
+            record.control_type,
+            record.version,
+            record.move_name,
+            record.category,
+            record.command,
+            record.startup,
+            record.active,
+            record.recovery,
+            record.hit_advantage,
+            record.block_advantage,
+            record.cancel,
+            record.damage,
+            record.combo_scaling,
+            record.drive_gauge_gain_hit,
+            record.drive_gauge_lose_dguard,
+            record.drive_gauge_lose_punish,
+            record.sa_gauge_gain,
+            record.attribute,
+            record.note,
+        ],
+    )
+    .map_err(|e| format!("Failed to upsert move {}: {}", record.move_id, e))?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -766,6 +808,59 @@ mod tests {
 
         let moves = get_moves_for_character(&conn, "luke", "classic").expect("get_moves");
         assert!(moves.is_empty());
+
+        drop(conn);
+        let _ = dir.close();
+    }
+
+    #[test]
+    fn test_upsert_move_insert_and_replace() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let db_path = dir.path().join("test.db");
+        let conn = open_db_at(&db_path).expect("open_db_at");
+        init_schema(&conn).expect("init_schema");
+
+        let record = MoveRecord {
+            move_id: "luke-classic-Standing Light Punch".to_string(),
+            character_id: "luke".to_string(),
+            character_name: "LUKE".to_string(),
+            control_type: "classic".to_string(),
+            version: "sf6-ui-2026.11".to_string(),
+            move_name: "Standing Light Punch".to_string(),
+            category: "Normal".to_string(),
+            command: "[LP]".to_string(),
+            startup: "7".to_string(),
+            active: "7-8".to_string(),
+            recovery: "*11".to_string(),
+            hit_advantage: "2".to_string(),
+            block_advantage: "-3".to_string(),
+            cancel: "C".to_string(),
+            damage: "300".to_string(),
+            combo_scaling: Some("Starter scaling 20%".to_string()),
+            drive_gauge_gain_hit: Some(250),
+            drive_gauge_lose_dguard: Some(-500),
+            drive_gauge_lose_punish: Some(-2000),
+            sa_gauge_gain: Some(300),
+            attribute: Some("High".to_string()),
+            note: Some("* 3 frames of recovery added when the attack misses".to_string()),
+        };
+
+        // Insert
+        upsert_move(&conn, &record).expect("upsert_move insert");
+        let moves = get_moves_for_character(&conn, "luke", "classic").expect("get_moves");
+        assert_eq!(moves.len(), 1);
+        assert_eq!(moves[0].move_name, "Standing Light Punch");
+        assert_eq!(moves[0].startup, "7");
+
+        // Replace (same move_id, different data)
+        let mut updated = record.clone();
+        updated.startup = "6".to_string();
+        updated.damage = "320".to_string();
+        upsert_move(&conn, &updated).expect("upsert_move replace");
+        let moves = get_moves_for_character(&conn, "luke", "classic").expect("get_moves");
+        assert_eq!(moves.len(), 1, "UPSERT should not duplicate rows");
+        assert_eq!(moves[0].startup, "6");
+        assert_eq!(moves[0].damage, "320");
 
         drop(conn);
         let _ = dir.close();
