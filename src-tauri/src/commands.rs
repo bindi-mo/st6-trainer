@@ -180,6 +180,13 @@ pub fn check_model_exists(model_file_name: String) -> Result<bool, String> {
     crate::model_manager::model_exists(&model_file_name)
 }
 
+/// List all model files in `$HOME/.st6-trainer/models/`.
+#[tauri::command]
+pub fn list_models() -> Result<Vec<String>, String> {
+    crate::model_manager::list_models()
+        .map(|paths| paths.iter().filter_map(|p| p.file_name().map(|n| n.to_string_lossy().to_string())).collect())
+}
+
 /// Validate a model file (GGUF header + optional SHA256).
 #[tauri::command]
 pub fn verify_model(

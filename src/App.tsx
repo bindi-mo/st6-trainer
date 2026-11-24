@@ -123,6 +123,11 @@ function App() {
   // ===== LLM state =====
   const [workerStatus, setWorkerStatus] = useState<WorkerStatus | null>(null);
   const [workerStatusError, setWorkerStatusError] = useState<string | null>(null);
+  const [models, setModels] = useState<string[]>([]);
+  const [modelsLoading, setModelsLoading] = useState(false);
+  const [selectedModel, setSelectedModel] = useState("");
+  const [workerStartError, setWorkerStartError] = useState<string | null>(null);
+  const [isWorkerStarting, setIsWorkerStarting] = useState(false);
   const [chatInput, setChatInput] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -197,6 +202,61 @@ function App() {
     loadCharacters();
     return () => { mounted = false; };
   }, []);
+
+  // Load available models on startup
+  useEffect(() => {
+    let mounted = true;
+    async function loadModels() {
+      setModelsLoading(true);
+      try {
+        const data = await invoke<string[]>("list_models");
+        if (mounted) setModels(data);
+      } catch (e) {
+        console.error("[App] Failed to load models:", e);
+      } finally {
+        if (mounted) setModelsLoading(false);
+      }
+    }
+    loadModels();
+    return () => { mounted = false; };
+  }, []);
+
+  // ===== LLM worker management =====
+  async function startWorker() {
+    if (!selectedModel) {
+      setWorkerStartError("モデルを選択してください");
+      return;
+    }
+    setIsWorkerStarting(true);
+    setWorkerStartError(null);
+    try {
+      const status = await invoke<WorkerStatus>("llm_worker_start", {
+        model_path: selectedModel,
+        ctx_size: 4096,
+        gpu_layers: 35,
+      });
+      setWorkerStatus(status);
+      setWorkerStatusError(null);
+      toast("LLM ワーカーを起動しました", "success");
+    } catch (error) {
+      setWorkerStartError(error as string);
+      toast("LLM ワーカー起動に失敗しました", "error");
+    } finally {
+      setIsWorkerStarting(false);
+    }
+  }
+
+  async function shutdownWorker() {
+    try {
+      await invoke("llm_worker_shutdown");
+      setWorkerStatus(null);
+      setWorkerStatusError(null);
+      setMessages([]);
+      toast("LLM ワーカーを停止しました", "info");
+    } catch (error) {
+      console.error("[App] Worker shutdown error:", error);
+    }
+  }
 
   // ===== Scanner functions (existing) =====
   async function selectVideo() {
@@ -317,17 +377,6 @@ function App() {
   }
 
   // ===== LLM functions =====
-  async function refreshWorkerStatus() {
-    try {
-      const status = await invoke<WorkerStatus>("llm_worker_status");
-      setWorkerStatus(status);
-      setWorkerStatusError(null);
-    } catch (error) {
-      setWorkerStatusError(error as string);
-      setWorkerStatus(null);
-    }
-  }
-
   async function sendChatMessage() {
     const text = chatInput.trim();
     if (!text || isStreaming) return;
@@ -450,8 +499,6 @@ function App() {
       <HeaderControls
         onSelectVideo={selectVideo}
         isScanning={isScanning}
-        workerStatus={workerStatus}
-        refreshWorkerStatus={refreshWorkerStatus}
         myCharacter={myCharacter}
         setMyCharacter={setMyCharacter}
         opponentCharacter={opponentCharacter}
@@ -649,9 +696,69 @@ function App() {
               </div>
             )}
           >
-            <section className="section llm-section">
-              <h2>LLM チャット</h2>
+            {/* LLM モデル選択・ワーカー管理パネル */}
+            <section className="section llm-model-panel">
+              <h2>LLM モデル</h2>
+              <div className="model-selection">
+                <div className="model-list">
+                  <label>使用モデル:</label>
+                  {modelsLoading && <span className="loading">読み込み中…</span>}
+                  <select
+                    value={selectedModel}
+                    onChange={(e) => setSelectedModel(e.target.value)}
+                    disabled={modelsLoading || isWorkerStarting || (workerStatus?.state === "Ready" || workerStatus?.state === "Busy")}
+                  >
+                    <option value="">モデルを選択してください</option>
+                    {models.map((m) => (
+                      <option key={m} value={m}>
+                        {m}
+                      </option>
+                    ))}
+                  </select>
+                  {models.length === 0 && !modelsLoading && (
+                    <span className="model-empty">モデルが見つかりません。モデルをダウンロードしてください。</span>
+                  )}
+                </div>
+                <div className="worker-actions">
+                  {workerStatus ? (
+                    <>
+                      <span className={`worker-status ${workerStatus.state.toLowerCase()}`}>
+                        {workerStatus.state === "Ready" ? "● 準備完了" : workerStatus.state === "Busy" ? "● 処理中" : workerStatus.state === "Error" ? "● エラー" : "○ " + workerStatus.state}
+                      </span>
+                      <button
+                        onClick={shutdownWorker}
+                        disabled={workerStatus.state !== "Ready" && workerStatus.state !== "Busy"}
+                        className="secondary"
+                      >
+                        ワーカー停止
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <span className="worker-status offline">○ 未起動</span>
+                      <button
+                        onClick={startWorker}
+                        disabled={isWorkerStarting || !selectedModel || modelsLoading}
+                        className="primary"
+                      >
+                        {isWorkerStarting ? "起動中…" : "ワーカー起動"}
+                      </button>
+                    </>
+                  )}
+                  {workerStartError && <div className="error">{workerStartError}</div>}
+                </div>
+              </div>
+              {workerStatusError && (
+                <div className="error">ワーカー状態エラー: {workerStatusError}</div>
+              )}
+            </section>
 
+            {/* LLM チャット */}
+            <section className="section llm-chat-section">
+              <h2>LLM チャット</h2>
+              <p className="section-hint">
+                ワーカー起動後、メッセージを入力して LLM と対話できます。
+              </p>
               <div className="chat-messages" ref={messagesEndRef}>
                 {messages.map((m) => (
                   <div
@@ -677,11 +784,11 @@ function App() {
                   onChange={(e) => setChatInput(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && sendChatMessage()}
                   placeholder="メッセージを入力して Enter で送信"
-                  disabled={isStreaming}
+                  disabled={isStreaming || !workerStatus || workerStatus.state !== "Ready"}
                 />
                 <button
                   onClick={sendChatMessage}
-                  disabled={isStreaming || !chatInput.trim()}
+                  disabled={isStreaming || !chatInput.trim() || !workerStatus || workerStatus.state !== "Ready"}
                   className="primary"
                 >
                   {isStreaming ? "生成中…" : "送信"}
@@ -692,32 +799,32 @@ function App() {
                   </button>
                 )}
               </div>
-
-              {workerStatusError && (
-                <div className="error">ワーカー状態エラー: {workerStatusError}</div>
-              )}
             </section>
 
+            {/* レポート生成 */}
             <section className="section report-section">
-              <h2>レポートビューア</h2>
+              <h2>レポート生成</h2>
+              <p className="section-hint">
+                スキャン済みの試合データから、LLM を使ってレポートを生成します。
+              </p>
               <div className="report-controls">
                 <button
                   onClick={() => generateReport("analyze_damage")}
-                  disabled={isGeneratingReport || !scanResult}
+                  disabled={isGeneratingReport || !scanResult || !workerStatus || workerStatus.state !== "Ready"}
                   className="primary"
                 >
                   {isGeneratingReport ? "生成中…" : "被弾原因分析レポート"}
                 </button>
                 <button
                   onClick={() => generateReport("verify_punish")}
-                  disabled={isGeneratingReport || !scanResult}
+                  disabled={isGeneratingReport || !scanResult || !workerStatus || workerStatus.state !== "Ready"}
                   className="secondary"
                 >
                   {isGeneratingReport ? "生成中…" : "確定反撃検証レポート"}
                 </button>
                 <button
                   onClick={() => generateReport("training_menu")}
-                  disabled={isGeneratingReport || !scanResult}
+                  disabled={isGeneratingReport || !scanResult || !workerStatus || workerStatus.state !== "Ready"}
                   className="secondary"
                 >
                   {isGeneratingReport ? "生成中…" : "練習メニューレポート"}
@@ -794,6 +901,40 @@ function App() {
         controlType={selectedMove?.controlType ?? ""}
         moveName={selectedMove?.moveName ?? ""}
       />
+
+      {/* ステータスバー: LLM ワーカー状態などを表示 */}
+      <footer className="status-bar">
+        <div className="status-item">
+          <span className="status-label">LLM ワーカー:</span>
+          <span
+            className={`status-value ${workerStatus ? workerStatus.state.toLowerCase() : "offline"}`}
+          >
+            {workerStatus ? (
+              workerStatus.state === "Ready"
+                ? "準備完了"
+                : workerStatus.state === "Busy"
+                  ? "処理中"
+                  : workerStatus.state === "Error"
+                    ? "エラー"
+                    : workerStatus.state
+            ) : (
+              "未起動"
+            )}
+          </span>
+        </div>
+        {selectedModel && (
+          <div className="status-item">
+            <span className="status-label">モデル:</span>
+            <span className="status-value">{selectedModel}</span>
+          </div>
+        )}
+        {activeMatchId && (
+          <div className="status-item">
+            <span className="status-label">試合:</span>
+            <span className="status-value">{activeMatchId}</span>
+          </div>
+        )}
+      </footer>
     </main>
   );
 }

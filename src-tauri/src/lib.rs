@@ -42,6 +42,7 @@ pub fn run() {
             commands::get_app_config,
             commands::update_app_config,
             commands::check_model_exists,
+            commands::list_models,
             commands::verify_model,
             commands::download_model,
             // Phase 9: LLM worker commands
