@@ -1,5 +1,3 @@
-import { open } from "@tauri-apps/plugin-dialog";
-
 interface CharacterSummary {
   character_id: string;
   character_name: string;
@@ -56,13 +54,7 @@ export function HeaderControls(props: HeaderControlsProps) {
   };
 
   async function selectVideo() {
-    const filePath = await open({
-      multiple: false,
-      filters: [{ name: "Video", extensions: ["mp4", "mkv", "avi", "mov"] }],
-    });
-    if (filePath) {
-      onSelectVideo();
-    }
+    onSelectVideo();
   }
 
   return (
