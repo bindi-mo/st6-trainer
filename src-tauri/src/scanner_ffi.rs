@@ -196,6 +196,9 @@ pub struct Scanner {
     fn_get_last_error: Symbol<'static, unsafe extern "C" fn() -> *const c_char>,
     fn_set_manual_offsets:
         Symbol<'static, unsafe extern "C" fn(ScannerHandle, c_int, c_int, c_int) -> c_int>,
+    // Phase 3: 1パス統合イテレータ
+    fn_next_all:
+        Symbol<'static, unsafe extern "C" fn(ScannerHandle, *mut FrameTelemetry, *mut InputEvent, *mut MoveEvent) -> c_int>,
 }
 
 /// Resolve DLL path from src-tauri/ (copied by CMake POST_BUILD)
@@ -317,6 +320,10 @@ fn init_scanner(
     let api_version: Symbol<unsafe extern "C" fn() -> ScannerVersion> =
         unsafe { lib.get(b"scanner_api_version") }
             .map_err(|e| ScannerError::SymbolNotFound(format!("scanner_api_version: {}", e)))?;
+    let next_all: Symbol<
+        unsafe extern "C" fn(ScannerHandle, *mut FrameTelemetry, *mut InputEvent, *mut MoveEvent) -> c_int,
+    > = unsafe { lib.get(b"scanner_next_all") }
+        .map_err(|e| ScannerError::SymbolNotFound(format!("scanner_next_all: {}", e)))?;
 
     // Check API version
     let version = unsafe { api_version() };
@@ -365,6 +372,7 @@ fn init_scanner(
         fn_destroy: destroy,
         fn_get_last_error: get_last_error,
         fn_set_manual_offsets: set_manual_offsets,
+        fn_next_all: next_all,
     })
 }
 
@@ -485,6 +493,41 @@ impl Scanner {
         let ret = unsafe { (self.fn_next_move_event)(self.handle, &mut event) };
         match ret {
             1 => Ok(Some(event)),
+            0 => Ok(None),
+            -1 => {
+                let err_ptr = unsafe { (self.fn_get_last_error)() };
+                let err_msg = if err_ptr.is_null() {
+                    "Unknown error".to_string()
+                } else {
+                    unsafe { CStr::from_ptr(err_ptr) }.to_str()?.to_string()
+                };
+                Err(ScannerError::Operation(err_msg))
+            }
+            _ => Err(ScannerError::Operation("Unexpected return code".into())),
+        }
+    }
+
+    /// Phase 3: Get next telemetry + input + move event in a single pass (1 frame read)
+    pub fn next_all(
+        &self,
+    ) -> ScannerResult<Option<(FrameTelemetry, InputEvent, MoveEvent)>> {
+        let mut telemetry = FrameTelemetry::default();
+        let mut input_event = InputEvent::default();
+        let mut move_event = MoveEvent::default();
+        let ret = unsafe {
+            (self.fn_next_all)(
+                self.handle,
+                &mut telemetry,
+                &mut input_event,
+                &mut move_event,
+            )
+        };
+        match ret {
+            1 => {
+                telemetry.sa_p1 = telemetry.sa_p1.clamp(0, 3);
+                telemetry.sa_p2 = telemetry.sa_p2.clamp(0, 3);
+                Ok(Some((telemetry, input_event, move_event)))
+            }
             0 => Ok(None),
             -1 => {
                 let err_ptr = unsafe { (self.fn_get_last_error)() };

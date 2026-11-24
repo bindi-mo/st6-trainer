@@ -1411,4 +1411,350 @@ extern "C"
         }
     }
 
+    // ===== Phase 3: 1パス統合イテレータ =====
+    SCANNER_API int scanner_next_all(ScannerHandle handle, FrameTelemetry *telemetry_out, InputEvent *input_out, MoveEvent *move_out)
+    {
+        try
+        {
+            if (!handle || !telemetry_out || !input_out || !move_out)
+            {
+                g_last_error = "Invalid handle or output pointer";
+                return -1;
+            }
+            auto *impl = static_cast<ScannerImpl *>(handle);
+
+            // 各サブシステムが初期化済みか確認
+            if (!impl->input_tracker_initialized || !impl->input_tracker)
+            {
+                g_last_error = "Input tracker not initialized. Call scanner_get_metadata first.";
+                return -1;
+            }
+            if (!impl->frame_meter_detector_initialized || !impl->frame_meter_detector)
+            {
+                g_last_error = "Frame meter detector not initialized. Call scanner_get_metadata first.";
+                return -1;
+            }
+
+            // フレームを読み込む（1パスで1フレームのみ）
+            Mat frame;
+            if (!impl->cap.read(frame) || frame.empty())
+            {
+                return 0; // End of video
+            }
+
+            impl->current_frame++;
+
+            // 黒フレームをスキップ
+            cv::Mat gray;
+            if (frame.channels() == 3)
+            {
+                cv::cvtColor(frame, gray, cv::COLOR_BGR2GRAY);
+            }
+            else
+            {
+                gray = frame.clone();
+            }
+
+            double min_val, max_val;
+            cv::minMaxLoc(gray, &min_val, &max_val);
+
+            if (max_val < 10.0)
+            {
+                // 黒フレームはスキップして次へ（継続）
+                return 1;
+            }
+
+            // 正規化（1回のみ）
+            NormalizationResult norm_result = impl->normalizer->normalize(frame);
+            if (!norm_result.success)
+            {
+                g_last_error = norm_result.error_code + ": " + norm_result.error_message;
+                cout << "[Scanner] Normalization failed: " << g_last_error << endl;
+                return -1;
+            }
+
+            // ---- Telemetry (ゲージ検出) ----
+            memset(telemetry_out, 0, sizeof(FrameTelemetry));
+            telemetry_out->frame_index = impl->current_frame;
+            telemetry_out->source_frame_index = impl->current_frame;
+            telemetry_out->timestamp_ms = (int64_t)((impl->current_frame / impl->fps) * 1000.0);
+            telemetry_out->round_index = impl->round_index;
+            telemetry_out->hp_reset = 0;
+
+            double hp_p1 = 1.0, hp_p2 = 1.0;
+            if (impl->gauge_detector && impl->gauge_detector_initialized)
+            {
+                int upper_y_start = 0;
+                int upper_y_end = static_cast<int>(impl->config.canonical_height * 0.25);
+                int lower_y_start = static_cast<int>(impl->config.canonical_height * 0.70);
+                int lower_y_end = static_cast<int>(impl->config.canonical_height);
+
+                FrameGauges gauges = impl->gauge_detector->detect(norm_result.normalized_frame, upper_y_start, upper_y_end, lower_y_start, lower_y_end);
+
+                hp_p1 = gauges.hp_p1.value;
+                telemetry_out->drive_p1 = gauges.drive_p1.value * 6.0;
+                telemetry_out->sa_p1 = static_cast<int>(std::round(gauges.sa_p1.value * 3.0));
+                if (telemetry_out->sa_p1 < 0) telemetry_out->sa_p1 = 0;
+                if (telemetry_out->sa_p1 > 3) telemetry_out->sa_p1 = 3;
+                telemetry_out->in_burnout_p1 = gauges.in_burnout_p1 ? 1 : 0;
+
+                hp_p2 = gauges.hp_p2.value;
+                telemetry_out->drive_p2 = gauges.drive_p2.value * 6.0;
+                telemetry_out->sa_p2 = static_cast<int>(std::round(gauges.sa_p2.value * 3.0));
+                if (telemetry_out->sa_p2 < 0) telemetry_out->sa_p2 = 0;
+                if (telemetry_out->sa_p2 > 3) telemetry_out->sa_p2 = 3;
+                telemetry_out->in_burnout_p2 = gauges.in_burnout_p2 ? 1 : 0;
+
+                if (gauges.hp_p1.occluded)
+                {
+                    snprintf(telemetry_out->quality_flags[telemetry_out->quality_flags_count], sizeof(telemetry_out->quality_flags[0]), "HP_P1_OCCLUDED");
+                    telemetry_out->quality_flags_count++;
+                }
+                if (gauges.hp_p2.occluded)
+                {
+                    snprintf(telemetry_out->quality_flags[telemetry_out->quality_flags_count], sizeof(telemetry_out->quality_flags[0]), "HP_P2_OCCLUDED");
+                    telemetry_out->quality_flags_count++;
+                }
+                if (gauges.sa_p1.occluded)
+                {
+                    snprintf(telemetry_out->quality_flags[telemetry_out->quality_flags_count], sizeof(telemetry_out->quality_flags[0]), "SA_P1_OCCLUDED");
+                    telemetry_out->quality_flags_count++;
+                }
+                if (gauges.sa_p2.occluded)
+                {
+                    snprintf(telemetry_out->quality_flags[telemetry_out->quality_flags_count], sizeof(telemetry_out->quality_flags[0]), "SA_P2_OCCLUDED");
+                    telemetry_out->quality_flags_count++;
+                }
+            }
+            else
+            {
+                hp_p1 = 1.0;
+                telemetry_out->drive_p1 = 6.0;
+                telemetry_out->sa_p1 = 3;
+                telemetry_out->in_burnout_p1 = 0;
+                hp_p2 = 1.0;
+                telemetry_out->drive_p2 = 6.0;
+                telemetry_out->sa_p2 = 3;
+                telemetry_out->in_burnout_p2 = 0;
+            }
+
+            telemetry_out->hp_p1 = hp_p1;
+            telemetry_out->hp_p2 = hp_p2;
+
+            // ラウンド検出（telemetryと同じロジック）
+            if (!impl->round_initialized)
+            {
+                impl->prev_hp_p1 = hp_p1;
+                impl->prev_hp_p2 = hp_p2;
+                impl->round_initialized = true;
+                impl->last_reset_frame = impl->current_frame;
+            }
+            else
+            {
+                int frames_since_reset = impl->current_frame - impl->last_reset_frame;
+                bool timer_expired = (frames_since_reset >= impl->config.round_duration_frames);
+                bool hp_reset_p1 = (impl->prev_hp_p1 < impl->config.hp_reset_low_threshold && hp_p1 > impl->config.hp_reset_high_threshold);
+                bool hp_reset_p2 = (impl->prev_hp_p2 < impl->config.hp_reset_low_threshold && hp_p2 > impl->config.hp_reset_high_threshold);
+                bool hp_reset_detected = hp_reset_p1 || hp_reset_p2;
+
+                string round_logo = impl->match_round_logo(norm_result.normalized_frame,
+                    static_cast<int>(impl->config.canonical_width * 0.30),
+                    static_cast<int>(impl->config.canonical_width * 0.70),
+                    static_cast<int>(impl->config.canonical_height * 0.35),
+                    static_cast<int>(impl->config.canonical_height * 0.65));
+                bool round_logo_detected = !round_logo.empty();
+
+                bool is_round_start_logo = (round_logo == "round" || round_logo == "final_round");
+                bool is_round_end_logo = (round_logo == "ko" || round_logo == "time_over");
+                bool min_interval_passed = (frames_since_reset >= impl->config.round_timer_gap_frames);
+
+                if (is_round_start_logo && min_interval_passed)
+                {
+                    impl->round_index++;
+                    telemetry_out->hp_reset = 1;
+                    impl->last_reset_frame = impl->current_frame;
+                }
+                else if (is_round_end_logo && min_interval_passed)
+                {
+                    impl->last_reset_frame = impl->current_frame;
+                }
+                else if ((timer_expired || hp_reset_detected) && min_interval_passed)
+                {
+                    impl->round_index++;
+                    telemetry_out->hp_reset = 1;
+                    impl->last_reset_frame = impl->current_frame;
+                }
+
+                impl->prev_hp_p1 = hp_p1;
+                impl->prev_hp_p2 = hp_p2;
+            }
+
+            telemetry_out->quality_flags_count = std::min(telemetry_out->quality_flags_count, 16);
+
+            // ---- Input Event (入力トラッキング) ----
+            memset(input_out, 0, sizeof(InputEvent));
+            InputSegment seg;
+            bool got_segment = false;
+
+            // P1 の入力履歴エリアをスキャン
+            for (int row = 0; row < impl->config.rows_visible && !got_segment; row++)
+            {
+                InputRow row_p1 = impl->input_tracker->read_input_row(frame, row, "P1");
+                if (row_p1.valid && impl->input_tracker->build_segment(row_p1, seg))
+                {
+                    snprintf(input_out->player, sizeof(input_out->player), "P1");
+                    input_out->frame_start = seg.frame_start;
+                    input_out->frame_end = seg.frame_end;
+                    input_out->round_index = seg.round_index;
+                    input_out->event_index = seg.event_index;
+                    input_out->hold_frames = seg.hold_frames;
+                    input_out->counter_clipped = seg.counter_clipped ? 1 : 0;
+                    input_out->hold_frames_lower_bound = seg.hold_frames_lower_bound ? 1 : 0;
+                    input_out->time_dilation_suspected = seg.time_dilation_suspected ? 1 : 0;
+                    input_out->resync_used = seg.resync_used ? 1 : 0;
+                    input_out->unknown_glyph = seg.unknown_glyph ? 1 : 0;
+                    input_out->is_preround = seg.is_preround ? 1 : 0;
+
+                    input_out->directions_count = 0;
+                    for (size_t i = 0; i < seg.directions.size() && i < 8; i++)
+                    {
+                        snprintf(input_out->directions[i], sizeof(input_out->directions[i]), "%s", seg.directions[i].c_str());
+                        input_out->directions_count++;
+                    }
+
+                    input_out->buttons_count = 0;
+                    for (size_t i = 0; i < seg.buttons.size() && i < 7; i++)
+                    {
+                        snprintf(input_out->buttons[i], sizeof(input_out->buttons[i]), "%s", seg.buttons[i].c_str());
+                        input_out->buttons_count++;
+                    }
+
+                    input_out->quality_flags_count = 0;
+                    for (size_t i = 0; i < seg.quality_flags.size() && i < 16; i++)
+                    {
+                        snprintf(input_out->quality_flags[i], sizeof(input_out->quality_flags[i]), "%s", seg.quality_flags[i].c_str());
+                        input_out->quality_flags_count++;
+                    }
+
+                    got_segment = true;
+                }
+            }
+
+            // P1 で見つからなければ P2 をスキャン
+            if (!got_segment)
+            {
+                for (int row = 0; row < impl->config.rows_visible && !got_segment; row++)
+                {
+                    InputRow row_p2 = impl->input_tracker->read_input_row(frame, row, "P2");
+                    if (row_p2.valid && impl->input_tracker->build_segment(row_p2, seg))
+                    {
+                        snprintf(input_out->player, sizeof(input_out->player), "P2");
+                        input_out->frame_start = seg.frame_start;
+                        input_out->frame_end = seg.frame_end;
+                        input_out->round_index = seg.round_index;
+                        input_out->event_index = seg.event_index;
+                        input_out->hold_frames = seg.hold_frames;
+                        input_out->counter_clipped = seg.counter_clipped ? 1 : 0;
+                        input_out->hold_frames_lower_bound = seg.hold_frames_lower_bound ? 1 : 0;
+                        input_out->time_dilation_suspected = seg.time_dilation_suspected ? 1 : 0;
+                        input_out->resync_used = seg.resync_used ? 1 : 0;
+                        input_out->unknown_glyph = seg.unknown_glyph ? 1 : 0;
+                        input_out->is_preround = seg.is_preround ? 1 : 0;
+
+                        input_out->directions_count = 0;
+                        for (size_t i = 0; i < seg.directions.size() && i < 8; i++)
+                        {
+                            snprintf(input_out->directions[i], sizeof(input_out->directions[i]), "%s", seg.directions[i].c_str());
+                            input_out->directions_count++;
+                        }
+
+                        input_out->buttons_count = 0;
+                        for (size_t i = 0; i < seg.buttons.size() && i < 7; i++)
+                        {
+                            snprintf(input_out->buttons[i], sizeof(input_out->buttons[i]), "%s", seg.buttons[i].c_str());
+                            input_out->buttons_count++;
+                        }
+
+                        input_out->quality_flags_count = 0;
+                        for (size_t i = 0; i < seg.quality_flags.size() && i < 16; i++)
+                        {
+                            snprintf(input_out->quality_flags[i], sizeof(input_out->quality_flags[i]), "%s", seg.quality_flags[i].c_str());
+                            input_out->quality_flags_count++;
+                        }
+
+                        got_segment = true;
+                    }
+                }
+            }
+
+            // イベントが見つからなかった場合はデフォルト値（frame_start/end = current_frame）
+            if (!got_segment)
+            {
+                input_out->frame_start = impl->current_frame;
+                input_out->frame_end = impl->current_frame;
+                input_out->round_index = impl->round_index;
+                input_out->event_index = -1;
+            }
+
+            // ---- Move Event (フレームメーター) ----
+            memset(move_out, 0, sizeof(MoveEvent));
+            FrameMeterReading fm = impl->frame_meter_detector->detect(norm_result.normalized_frame, impl->current_frame);
+
+            move_out->frame_start = impl->current_frame;
+            move_out->frame_end = impl->current_frame;
+            move_out->round_index = impl->round_index;
+
+            if (fm.detected)
+            {
+                move_out->fm_startup_p1 = fm.startup_frames;
+                move_out->fm_total_p1 = fm.startup_frames + fm.active_frames + fm.recovery_frames;
+                move_out->fm_advantage_p1 = fm.advantage;
+                move_out->fm_startup_p2 = fm.startup_frames;
+                move_out->fm_total_p2 = fm.startup_frames + fm.active_frames + fm.recovery_frames;
+                move_out->fm_advantage_p2 = fm.advantage;
+                move_out->damage_p1 = 0;
+                move_out->combo_damage_p1 = 0;
+                move_out->damage_p2 = 0;
+                move_out->combo_damage_p2 = 0;
+                snprintf(move_out->attack_property_p1, sizeof(move_out->attack_property_p1), "");
+                snprintf(move_out->attack_property_p2, sizeof(move_out->attack_property_p2), "");
+                snprintf(move_out->attack_property_locale, sizeof(move_out->attack_property_locale), "en");
+                move_out->conf = fm.confidence;
+            }
+            else
+            {
+                move_out->fm_startup_p1 = 0;
+                move_out->fm_total_p1 = 0;
+                move_out->fm_advantage_p1 = 0;
+                move_out->fm_startup_p2 = 0;
+                move_out->fm_total_p2 = 0;
+                move_out->fm_advantage_p2 = 0;
+                move_out->damage_p1 = 0;
+                move_out->combo_damage_p1 = 0;
+                move_out->damage_p2 = 0;
+                move_out->combo_damage_p2 = 0;
+                snprintf(move_out->attack_property_p1, sizeof(move_out->attack_property_p1), "");
+                snprintf(move_out->attack_property_p2, sizeof(move_out->attack_property_p2), "");
+                snprintf(move_out->attack_property_locale, sizeof(move_out->attack_property_locale), "en");
+                move_out->conf = 0.0;
+            }
+
+            move_out->quality_flags_count = 0;
+
+            return 1;
+        }
+        catch (const std::exception &e)
+        {
+            g_last_error = std::string("Exception in scanner_next_all: ") + e.what();
+            cout << "[Scanner] Exception: " << g_last_error << endl;
+            return -1;
+        }
+        catch (...)
+        {
+            g_last_error = "Unknown exception in scanner_next_all";
+            cout << "[Scanner] Unknown exception" << endl;
+            return -1;
+        }
+    }
+
 } // extern "C"

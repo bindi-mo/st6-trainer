@@ -150,6 +150,10 @@ extern "C"
     SCANNER_API int scanner_next_input_event(ScannerHandle h, InputEvent *out); // player は構造体内
     SCANNER_API int scanner_next_move_event(ScannerHandle h, MoveEvent *out);
 
+    // Phase 3: 1パス統合イテレータ。1フレーム読み込み → telemetry + input + move を同時に出力
+    // 戻り値: 1=成功(データあり), 0=終了, -1=エラー
+    SCANNER_API int scanner_next_all(ScannerHandle h, FrameTelemetry *telemetry, InputEvent *input_event, MoveEvent *move_event);
+
     SCANNER_API void scanner_destroy(ScannerHandle h);
 
 #ifdef __cplusplus

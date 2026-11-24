@@ -30,32 +30,19 @@ pub async fn scan_video(
 ) -> Result<ScanResult, String> {
     let scanner = Scanner::new(&app, &video_path, None).map_err(|e| e.to_string())?;
 
-    // Get metadata
+    // Get metadata (initializes input tracker, frame meter detector, etc.)
     let metadata = scanner.get_metadata().map_err(|e| e.to_string())?;
     let metadata_out = MatchMetadataOut::from(metadata);
 
-    // Collect telemetry
+    // Collect all events in a single pass using scanner_next_all
     let mut telemetry = Vec::new();
-    while let Some(t) = scanner.next_telemetry().map_err(|e| e.to_string())? {
-        telemetry.push(FrameTelemetryOut::from(t));
-    }
-
-    // Re-create scanner for input events (separate stream)
-    let scanner2 = Scanner::new(&app, &video_path, None).map_err(|e| e.to_string())?;
-    scanner2.get_metadata().map_err(|e| e.to_string())?;
-
     let mut input_events = Vec::new();
-    while let Some(e) = scanner2.next_input_event().map_err(|e| e.to_string())? {
-        input_events.push(InputEventOut::from(e));
-    }
-
-    // Re-create scanner for move events
-    let scanner3 = Scanner::new(&app, &video_path, None).map_err(|e| e.to_string())?;
-    scanner3.get_metadata().map_err(|e| e.to_string())?;
-
     let mut move_events = Vec::new();
-    while let Some(e) = scanner3.next_move_event().map_err(|e| e.to_string())? {
-        move_events.push(MoveEventOut::from(e));
+
+    while let Some((t, i, m)) = scanner.next_all().map_err(|e| e.to_string())? {
+        telemetry.push(FrameTelemetryOut::from(t));
+        input_events.push(InputEventOut::from(i));
+        move_events.push(MoveEventOut::from(m));
     }
 
     // Build JSONL for pipeline
