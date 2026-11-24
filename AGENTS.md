@@ -1,13 +1,20 @@
 # Agent Guidelines & Operational Rules
 
-This project is a Windows desktop application built with **Tauri (Rust) + React (TypeScript) + Bun**.
+This project is a desktop application built with **Tauri (Rust) + React (TypeScript) + Bun**.
 To prevent tool invocation failures and unnecessary trial-and-error, agents must strictly adhere to the following rules.
 
 ---
 
-## 1. Environment & Command Execution Rules (Windows / Bun)
+## 0. Initial Platform Verification (Mandatory First Step)
 
-* **OS Environment**: This environment runs on **Windows (PowerShell)**. Do not use Unix/Linux-specific shell commands such as `which`, `head`, `tail`, or `grep`. Always use dedicated tools (`Read`, `Search`, `Find files`) for file searching and inspection.
+* **Verify OS & Shell First**: Before running any terminal commands or modifying files, **always check the current OS and shell environment first** (e.g., check `$PSVersionTable` or `echo $OSTYPE` / `uname -a`).
+* **Do Not Use `head` on Windows**: If the platform is **Windows (PowerShell)**, **never use the Unix `head` command**. Instead, use PowerShell's `Select-Object` (e.g., `Get-Content <file> | Select-Object -First 50`) or the dedicated `Read` tool with `view_range`.
+
+---
+
+## 1. Environment & Command Execution Rules (Bun / Cargo)
+
+* **Shell Compatibility**: Adapt command syntax to the platform verified in Step 0. On Windows PowerShell where Unix commands (`head`, `which`, `grep`, etc.) are unavailable, use PowerShell equivalents (`Select-Object`, `Get-Command`, `Select-String`) or dedicated tools (`Read`, `Search`, `Find files`).
 * **Package Manager / Runner**: This project uses **Bun**. Do not use `npm` or `npx`; always use `bun` / `bunx`.
   * Frontend type check: `bunx tsc --noEmit`
   * Frontend build: `bunx vite build`
@@ -25,7 +32,7 @@ To prevent tool invocation failures and unnecessary trial-and-error, agents must
 * **Improving `Edit File` Accuracy**:
   * When specifying `old_str`, include **3–5 lines of surrounding context** so that the target block is uniquely identifiable within the file.
   * Never specify generic single lines such as `return (` or `}` as `old_str`.
-  * Always inspect the latest lines of the target file using the `Read` tool before editing; do not construct `old_str` from memory or guesswork.
+  * Always inspect the latest lines of the target file before editing; do not construct `old_str` from memory or guesswork.
 
 ---
 
@@ -41,6 +48,6 @@ To prevent tool invocation failures and unnecessary trial-and-error, agents must
 
 * **Pre-Edit Type & Configuration Verification**:
   * Before writing or modifying TypeScript code, check `tsconfig.json` (such as `strict` or `noUnusedLocals` settings) as needed, and ensure no unused variables, imports, or functions are left behind.
-  * If the API signature of an external library (e.g., `@tauri-apps/plugin-dialog`) is unclear, do not guess and iterate through build errors. Instead, `Read` `node_modules/@tauri-apps/<package>/dist-js/*.d.ts` first to confirm the exact type definitions.
+  * If the API signature of an external library (e.g., `@tauri-apps/plugin-dialog`) is unclear, do not guess and iterate through build errors. Instead, inspect `node_modules/@tauri-apps/<package>/dist-js/*.d.ts` first to confirm the exact type definitions.
 * **Efficient Verification Cycle**:
   * When creating or editing multiple components, do not run a build after every single file. Run `bunx tsc --noEmit` or `cargo check` together once a cohesive set of changes is complete.
