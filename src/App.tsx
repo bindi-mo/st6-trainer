@@ -6,12 +6,12 @@ import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import "./App.css";
 import { ErrorBoundary } from "./components/ErrorBoundary";
-import { useToast } from "./hooks/useToast";
-import { HeaderControls } from "./components/HeaderControls";
-import { TimelineNav } from "./components/TimelineNav";
-import { StatsDashboard } from "./components/StatsDashboard";
-import { MatchHistory } from "./components/MatchHistory";
 import { FrameDataModal } from "./components/FrameDataModal";
+import { HeaderControls } from "./components/HeaderControls";
+import { MatchHistory } from "./components/MatchHistory";
+import { StatsDashboard } from "./components/StatsDashboard";
+import { TimelineNav } from "./components/TimelineNav";
+import { useToast } from "./hooks/useToast";
 
 interface VideoScanResult {
   video_path: string;
@@ -231,7 +231,7 @@ function App() {
     setWorkerStartError(null);
     try {
       const status = await invoke<WorkerStatus>("llm_worker_start", {
-        model_path: selectedModel,
+        modelPath: selectedModel,
         ctx_size: 4096,
         gpu_layers: 35,
       });
@@ -735,7 +735,6 @@ function App() {
                     </>
                   ) : (
                     <>
-                      <span className="worker-status offline">○ 未起動</span>
                       <button
                         onClick={startWorker}
                         disabled={isWorkerStarting || !selectedModel || modelsLoading}

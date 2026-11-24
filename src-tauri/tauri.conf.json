@@ -32,6 +32,7 @@
     ],
     "resources": [
       "st6_scanner.dll",
+      "st6_llm_worker.exe",
       "config/*.json",
       "templates/**/*",
       "scripts/requirements.txt",

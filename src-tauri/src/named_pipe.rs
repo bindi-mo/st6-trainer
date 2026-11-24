@@ -49,7 +49,7 @@ impl NamedPipeClient {
     /// Connect to the Named Pipe server.
     pub async fn connect(&mut self) -> Result<(), NamedPipeError> {
         let pipe = TokioClientOptions::new()
-
+            .read(true)
             .write(true)
             .open(&self.pipe_name)
             .map_err(|e| NamedPipeError::Connect(self.pipe_name.clone(), e))?;

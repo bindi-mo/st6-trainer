@@ -9,7 +9,7 @@ use crate::scanner_ffi::{
 use serde::Serialize;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
 
 /// Result of a scan operation
 #[derive(Debug, Serialize)]
@@ -334,16 +334,44 @@ fn get_llm_worker() -> &'static tokio::sync::Mutex<crate::llm_worker::LlmWorker>
     })
 }
 
+/// Resolve the `st6_llm_worker.exe` binary path.
+///
+/// Tries the Tauri resource_dir first (bundled in production), then falls back
+/// to `src-tauri/` (development).
+fn get_worker_bin_path(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
+    let resolver = app.path();
+    let resource_dir = resolver.resource_dir().map_err(|e| e.to_string())?;
+    let bin_path = resource_dir.join("st6_llm_worker.exe");
+    if bin_path.exists() {
+        return Ok(bin_path);
+    }
+    // Fallback: src-tauri/ directory (development)
+    let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let dev_bin = manifest_dir.join("st6_llm_worker.exe");
+    if dev_bin.exists() {
+        return Ok(dev_bin);
+    }
+    Err(format!(
+        "st6_llm_worker.exe not found at {} or {}",
+        bin_path.display(),
+        dev_bin.display()
+    ))
+}
+
 /// Start the LLM worker subprocess and connect via Named Pipe.
 #[tauri::command]
 pub async fn llm_worker_start(
-    _app: tauri::AppHandle,
+    app: tauri::AppHandle,
     model_path: String,
     ctx_size: Option<u32>,
     gpu_layers: Option<i32>,
 ) -> Result<crate::llm_worker::WorkerStatus, String> {
+    let worker_bin_path = get_worker_bin_path(&app)?;
+    // Resolve the model filename to the full path in $HOME/.st6-trainer/models/
+    let resolved_model_path = crate::paths::resolve_model_path(&model_path)?;
     let config = crate::llm_worker::WorkerConfig {
-        model_path,
+        worker_bin_path,
+        model_path: resolved_model_path.to_string_lossy().to_string(),
         ctx_size: ctx_size.unwrap_or(4096),
         gpu_layers: gpu_layers.unwrap_or(35),
         pipe_name: crate::named_pipe::DEFAULT_PIPE_NAME.to_string(),

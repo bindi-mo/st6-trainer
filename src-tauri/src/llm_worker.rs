@@ -11,6 +11,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::Arc;
+use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 use tokio::sync::{Mutex, RwLock};
 use tokio::time::{sleep, Duration};
@@ -61,7 +62,7 @@ impl Default for WorkerConfig {
             gpu_layers: 35,
             pipe_name: DEFAULT_PIPE_NAME.to_string(),
             request_timeout_secs: 120,
-            max_reconnect_attempts: 3,
+            max_reconnect_attempts: 60,
         }
     }
 }
@@ -105,7 +106,7 @@ impl LlmWorker {
         self.set_state(WorkerState::Starting).await;
 
         // Launch the subprocess
-        let child = Command::new(&self.config.worker_bin_path)
+        let mut child = Command::new(&self.config.worker_bin_path)
             .arg("--model")
             .arg(&self.config.model_path)
             .arg("--ctx-size")
@@ -120,6 +121,14 @@ impl LlmWorker {
             .spawn()
             .map_err(|e| format!("Failed to spawn worker subprocess: {}", e))?;
 
+        // Capture stderr for diagnostics before the child potentially exits
+        let mut stderr = child.stderr.take().expect("stderr is piped");
+        let stderr_handle = tokio::spawn(async move {
+            let mut buf = String::new();
+            let _ = stderr.read_to_string(&mut buf).await;
+            buf
+        });
+
         self.set_state(WorkerState::Connecting).await;
 
         // Store child process
@@ -128,19 +137,35 @@ impl LlmWorker {
             *child_lock = Some(child);
         }
 
-        // Connect to Named Pipe with retries
+        // Connect to Named Pipe with retries, aborting if the worker exits
         let mut pipe = NamedPipeClient::new(&self.config.pipe_name);
         let mut last_error = None;
 
         for attempt in 0..self.config.max_reconnect_attempts {
+            // If the worker has already exited, stop retrying
+            if let Some(status) = self.child.lock().await.as_mut().and_then(|c| c.try_wait().ok()) {
+                if status.is_some() {
+                    let stderr = stderr_handle.await.unwrap_or_default();
+                    return Err(format!(
+                        "Worker subprocess exited before pipe connection (status: {:?}); stderr: {}",
+                        status, stderr
+                    ));
+                }
+            }
+
             match pipe.connect().await {
                 Ok(()) => break,
                 Err(e) => {
                     last_error = Some(e);
-                    sleep(Duration::from_millis(500 * (attempt + 1) as u64)).await;
+                    // Cap backoff at 2 seconds so 60 attempts don't grow unbounded
+                    let delay_ms = std::cmp::min(500 * (attempt + 1) as u64, 2000);
+                    sleep(Duration::from_millis(delay_ms)).await;
                 }
             }
         }
+
+        // Abort stderr capture if still running
+        stderr_handle.abort();
 
         if let Some(e) = last_error {
             self.set_state(WorkerState::Error(format!(
@@ -149,6 +174,12 @@ impl LlmWorker {
             )))
             .await;
             return Err(format!("Named Pipe connection failed: {}", e));
+        }
+
+        // Store the connected pipe so subsequent requests can use it
+        {
+            let mut pipe_lock = self.pipe.lock().await;
+            *pipe_lock = Some(pipe);
         }
 
         self.set_state(WorkerState::LoadingModel).await;
@@ -175,11 +206,6 @@ impl LlmWorker {
         if !ready {
             self.set_state(WorkerState::Error("Model load timeout".to_string())).await;
             return Err("Model load timeout".to_string());
-        }
-
-        {
-            let mut pipe_lock = self.pipe.lock().await;
-            *pipe_lock = Some(pipe);
         }
 
         self.set_state(WorkerState::Ready).await;
