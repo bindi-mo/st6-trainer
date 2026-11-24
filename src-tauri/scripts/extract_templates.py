@@ -77,7 +77,7 @@ CATEGORIES = {
     ),
     "3": (
         "btn_modern",
-        ["L", "M", "H", "SP", "DP", "DI", "A", "modern"],
+        ["L", "M", "H", "SP", "DP", "DI", "AUTO", "modern"],
     ),
     "4": ("dir", ["1", "2", "3", "4", "6", "7", "8", "9"]),
     "5": (
