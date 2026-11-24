@@ -770,6 +770,9 @@ extern "C"
             // Input history (Phase 3)
             out->input_history_available = 1;
 
+            // Total frames for progress reporting (Phase 4)
+            out->total_frames = impl->total_frames;
+
             // Initialize input tracker
             if (!impl->input_tracker_initialized)
             {

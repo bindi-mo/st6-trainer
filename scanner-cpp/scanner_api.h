@@ -67,6 +67,7 @@ extern "C"
         int offset_snapped;  // 常に 0
         int manual_verified; // -1=null, 0=false, 1=true
         int input_history_available;
+        int total_frames;    // 動画の総フレーム数（進行度表示用）
         char attack_property_locale[32]; // "en,ja" 等
         char extracted_at_utc[32];
         char config_version[32];

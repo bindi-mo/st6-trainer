@@ -113,6 +113,14 @@ function App() {
   const [isScanning, setIsScanning] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
   const [scanProgress, setScanProgress] = useState(0);
+  const [scanProgressDetail, setScanProgressDetail] = useState<{
+    frame_index: number;
+    total_frames: number;
+    progress_percent: number;
+    elapsed_ms: number;
+    estimated_remaining_ms: number;
+    estimated_finish_at: number | null;
+  } | null>(null);
   // Manual calibration state (Phase 6)
   const [manualTopY, setManualTopY] = useState<number | null>(null);
   const [manualBottomY, setManualBottomY] = useState<number | null>(null);
@@ -179,6 +187,24 @@ function App() {
   useEffect(() => {
     const unlisten = listen<DownloadProgress>("model-download-progress", (event) => {
       setModelDownloadProgress(event.payload);
+    });
+    return () => {
+      unlisten.then((f) => f());
+    };
+  }, []);
+
+  // Listen for scan progress
+  useEffect(() => {
+    const unlisten = listen<{
+      frame_index: number;
+      total_frames: number;
+      progress_percent: number;
+      elapsed_ms: number;
+      estimated_remaining_ms: number;
+      estimated_finish_at: number | null;
+    }>("scan-progress", (event) => {
+      setScanProgressDetail(event.payload);
+      setScanProgress(Math.round(event.payload.progress_percent));
     });
     return () => {
       unlisten.then((f) => f());
@@ -283,6 +309,7 @@ function App() {
     setIsScanning(true);
     setScanError(null);
     setScanProgress(0);
+    setScanProgressDetail(null);
     setManualTopY(null);
     setManualBottomY(null);
     setManualVerified(null);
@@ -550,6 +577,36 @@ function App() {
               >
                 {isScanning ? `Scanning... ${scanProgress}%` : "Scan Video"}
               </button>
+
+              {isScanning && scanProgressDetail && (
+                <div className="scan-progress">
+                  <div className="progress-label">
+                    <span>{scanProgressDetail.frame_index} / {scanProgressDetail.total_frames} フレーム</span>
+                    <span>{scanProgress}%</span>
+                  </div>
+                  <div className="progress-bar">
+                    <div
+                      className="progress-fill"
+                      style={{ width: `${scanProgress}%` }}
+                    ></div>
+                  </div>
+                  <div className="progress-info">
+                    <span>
+                      経過: {(scanProgressDetail.elapsed_ms / 1000).toFixed(1)}s
+                    </span>
+                    {scanProgressDetail.estimated_remaining_ms > 0 && (
+                      <span>
+                        残り: {(scanProgressDetail.estimated_remaining_ms / 1000).toFixed(1)}s
+                      </span>
+                    )}
+                    {scanProgressDetail.estimated_finish_at && (
+                      <span>
+                        終了予定: {new Date(scanProgressDetail.estimated_finish_at).toLocaleTimeString()}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              )}
 
               {scanError && (
                 <div className="error">Error: {scanError}</div>

@@ -39,11 +39,56 @@ pub async fn scan_video(
     let mut input_events = Vec::new();
     let mut move_events = Vec::new();
 
+    let total_frames = metadata_out.total_frames.max(1);
+    let mut frame_count: i32 = 0;
+
     while let Some((t, i, m)) = scanner.next_all().map_err(|e| e.to_string())? {
+        let frame_count_val = t.frame_index;
+        let elapsed_ms = t.timestamp_ms;
         telemetry.push(FrameTelemetryOut::from(t));
         input_events.push(InputEventOut::from(i));
         move_events.push(MoveEventOut::from(m));
+
+        frame_count = frame_count_val;
+        if frame_count > 0 && frame_count % 30 == 0 {
+            let progress = (frame_count as f64 / total_frames as f64 * 100.0).clamp(0.0, 100.0);
+            let remaining_ms = if progress > 0.0 {
+                (elapsed_ms as f64 / progress * 100.0 - elapsed_ms as f64) as i64
+            } else {
+                0
+            };
+            let estimated_finish_at = if remaining_ms > 0 {
+                Some((std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_millis() as i64
+                    + remaining_ms) as i64)
+            } else {
+                None
+            };
+
+            let _ = app.emit("scan-progress", serde_json::json!({
+                "frame_index": frame_count,
+                "total_frames": total_frames,
+                "progress_percent": progress,
+                "elapsed_ms": elapsed_ms,
+                "estimated_remaining_ms": remaining_ms,
+                "estimated_finish_at": estimated_finish_at,
+            }));
+        }
     }
+
+    // Final progress event
+    let final_progress = 100.0;
+    let elapsed_ms = telemetry.last().map(|t| t.timestamp_ms).unwrap_or(0);
+    let _ = app.emit("scan-progress", serde_json::json!({
+        "frame_index": frame_count,
+        "total_frames": total_frames,
+        "progress_percent": final_progress,
+        "elapsed_ms": elapsed_ms,
+        "estimated_remaining_ms": 0,
+        "estimated_finish_at": null,
+    }));
 
     // Build JSONL for pipeline
     let telemetry_jsonl: String = telemetry
