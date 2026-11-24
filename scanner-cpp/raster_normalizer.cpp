@@ -27,9 +27,6 @@ bool RasterNormalizer::detect_content_region(const cv::Mat& frame,
     width = frame.cols;
     height = frame.rows;
     
-    std::cout << "[RasterNormalizer] Using full frame as content region: "
-              << width << "x" << height << std::endl;
-    
     return true;
 }
 
@@ -45,8 +42,6 @@ bool RasterNormalizer::check_aspect_ratio(int width, int height, std::string& er
         return false;
     }
     
-    std::cout << "[RasterNormalizer] Aspect ratio check passed: " << aspect 
-              << " (diff=" << diff << ")" << std::endl;
     return true;
 }
 
@@ -62,8 +57,6 @@ bool RasterNormalizer::check_isotropy(int src_width, int src_height, std::string
         return false;
     }
     
-    std::cout << "[RasterNormalizer] Isotropy check passed: scale_x=" << scale_x 
-              << " scale_y=" << scale_y << " (diff=" << diff << ")" << std::endl;
     return true;
 }
 
@@ -81,7 +74,7 @@ NormalizationResult RasterNormalizer::normalize(const cv::Mat& input_frame) {
         return result;
     }
     
-    // Debug: check input frame
+    // Check input frame for black frame detection
     double input_min, input_max;
     cv::Point input_min_loc, input_max_loc;
     cv::Mat input_gray;
@@ -91,12 +84,6 @@ NormalizationResult RasterNormalizer::normalize(const cv::Mat& input_frame) {
         input_gray = input_frame.clone();
     }
     cv::minMaxLoc(input_gray, &input_min, &input_max, &input_min_loc, &input_max_loc);
-    cv::Scalar input_mean_scalar = cv::mean(input_gray);
-    double input_mean_val = input_mean_scalar[0];
-    
-    std::cout << "[RasterNormalizer] Input frame: " << input_frame.cols << "x" 
-              << input_frame.rows << " range=[" << input_min << ", " << input_max 
-              << "] mean=" << input_mean_val << std::endl;
     
     if (input_max < 10.0) {
         result.error_code = "E_BLACK_FRAME";
@@ -128,7 +115,7 @@ NormalizationResult RasterNormalizer::normalize(const cv::Mat& input_frame) {
     // Step 4: Crop content region
     cv::Mat cropped = input_frame(cv::Rect(x_off, y_off, content_w, content_h)).clone();
     
-    // Debug: check cropped frame
+    // Check cropped frame for black frame detection
     cv::Mat cropped_gray;
     if (cropped.channels() == 3) {
         cv::cvtColor(cropped, cropped_gray, cv::COLOR_BGR2GRAY);
@@ -137,11 +124,6 @@ NormalizationResult RasterNormalizer::normalize(const cv::Mat& input_frame) {
     }
     double cropped_min, cropped_max;
     cv::minMaxLoc(cropped_gray, &cropped_min, &cropped_max);
-    cv::Scalar cropped_mean_scalar = cv::mean(cropped_gray);
-    double cropped_mean_val = cropped_mean_scalar[0];
-    
-    std::cout << "[RasterNormalizer] Cropped frame: " << cropped.cols << "x" << cropped.rows 
-              << " range=[" << cropped_min << ", " << cropped_max << "] mean=" << cropped_mean_val << std::endl;
     
     if (cropped_max < 10.0) {
         result.error_code = "E_BLACK_FRAME";
@@ -161,10 +143,6 @@ NormalizationResult RasterNormalizer::normalize(const cv::Mat& input_frame) {
     result.content_y_offset = y_off;
     result.content_width = content_w;
     result.content_height = content_h;
-    
-    std::cout << "[RasterNormalizer] Normalization successful: " 
-              << content_w << "x" << content_h << " -> " 
-              << canonical_width_ << "x" << canonical_height_ << std::endl;
     
     return result;
 }
