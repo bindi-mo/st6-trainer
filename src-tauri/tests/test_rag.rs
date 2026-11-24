@@ -2,7 +2,6 @@
 //! Covers template rendering, token budget management, and prompt generation.
 
 use serial_test::serial;
-use std::fs;
 use tempfile::tempdir;
 
 #[test]

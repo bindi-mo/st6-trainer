@@ -40,7 +40,8 @@ fn test_config_default_and_roundtrip() {
 
     // JSON roundtrip
     let json = serde_json::to_string(&cfg).expect("serialize");
-    let parsed: st6_trainer_lib::config::AppConfig = serde_json::from_str(&json).expect("deserialize");
+    let parsed: st6_trainer_lib::config::AppConfig =
+        serde_json::from_str(&json).expect("deserialize");
     assert_eq!(parsed.model_url, cfg.model_url);
     assert_eq!(parsed.ctx_size, cfg.ctx_size);
     assert_eq!(parsed.gpu_layers, cfg.gpu_layers);
@@ -53,7 +54,11 @@ fn test_config_default_and_roundtrip() {
 fn test_config_save_and_load_from_home() {
     let cfg = st6_trainer_lib::config::AppConfig::default();
     let result = st6_trainer_lib::config::save_app_config_to_home(&cfg);
-    assert!(result.is_ok(), "save_app_config_to_home: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "save_app_config_to_home: {:?}",
+        result.err()
+    );
 
     let loaded = st6_trainer_lib::config::load_app_config_from_home();
     assert_eq!(loaded.model_url, cfg.model_url);
@@ -67,10 +72,16 @@ fn test_config_save_and_load_from_home() {
 fn test_config_migrate_outdated_version_via_save_load() {
     // migrate_app_config is private; test migration indirectly via save/load cycle.
     // Save a config with an outdated version, then load it back and verify version is updated.
-    let mut cfg = st6_trainer_lib::config::AppConfig::default();
-    cfg.config_version = "config-0.9".to_string();
+    let cfg = st6_trainer_lib::config::AppConfig {
+        config_version: "config-0.9".to_string(),
+        ..Default::default()
+    };
     let save_result = st6_trainer_lib::config::save_app_config_to_home(&cfg);
-    assert!(save_result.is_ok(), "save_app_config_to_home: {:?}", save_result.err());
+    assert!(
+        save_result.is_ok(),
+        "save_app_config_to_home: {:?}",
+        save_result.err()
+    );
 
     let loaded = st6_trainer_lib::config::load_app_config_from_home();
     // load_app_config_from_home runs migration, so version should be updated to current
@@ -94,7 +105,11 @@ fn test_model_manager_validation_nonexistent() {
 #[serial]
 fn test_model_manager_list_models() {
     let result = st6_trainer_lib::model_manager::list_models();
-    assert!(result.is_ok(), "list_models should not fail: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "list_models should not fail: {:?}",
+        result.err()
+    );
 }
 
 #[test]

@@ -8,8 +8,7 @@ use serial_test::serial;
 #[serial]
 fn test_llm_protocol_serialize_deserialize_infer() {
     use st6_trainer_lib::llm_protocol::{
-        deserialize_request, deserialize_response, serialize_request, serialize_response,
-        InferParams, LlmRequest, LlmResponse, RequestEnvelope, ResponseEnvelope, Usage,
+        InferParams, LlmRequest, RequestEnvelope, deserialize_request, serialize_request,
     };
 
     let env = RequestEnvelope {
@@ -31,7 +30,7 @@ fn test_llm_protocol_serialize_deserialize_infer() {
 #[serial]
 fn test_llm_protocol_serialize_deserialize_token() {
     use st6_trainer_lib::llm_protocol::{
-        deserialize_response, serialize_response, LlmResponse, ResponseEnvelope, Usage,
+        LlmResponse, ResponseEnvelope, deserialize_response, serialize_response,
     };
 
     let env = ResponseEnvelope {
@@ -51,7 +50,7 @@ fn test_llm_protocol_serialize_deserialize_token() {
 #[serial]
 fn test_llm_protocol_serialize_deserialize_error() {
     use st6_trainer_lib::llm_protocol::{
-        deserialize_response, serialize_response, LlmResponse, ResponseEnvelope,
+        LlmResponse, ResponseEnvelope, deserialize_response, serialize_response,
     };
 
     let env = ResponseEnvelope {
@@ -71,7 +70,7 @@ fn test_llm_protocol_serialize_deserialize_error() {
 #[serial]
 fn test_llm_protocol_health_and_shutdown() {
     use st6_trainer_lib::llm_protocol::{
-        deserialize_request, serialize_request, LlmRequest, RequestEnvelope,
+        LlmRequest, RequestEnvelope, deserialize_request, serialize_request,
     };
 
     let health = RequestEnvelope {
@@ -121,7 +120,7 @@ fn test_llm_worker_config_default() {
 #[test]
 #[serial]
 fn test_llm_worker_status_serialization() {
-    use st6_trainer_lib::llm_worker::{WorkerStatus, WorkerState};
+    use st6_trainer_lib::llm_worker::{WorkerState, WorkerStatus};
     use st6_trainer_lib::named_pipe::DEFAULT_PIPE_NAME;
 
     let status = WorkerStatus {
@@ -139,8 +138,8 @@ fn test_llm_worker_status_serialization() {
 #[test]
 #[serial]
 fn test_llm_infer_result_serialization() {
-    use st6_trainer_lib::llm_worker::InferResult;
     use st6_trainer_lib::llm_protocol::Usage;
+    use st6_trainer_lib::llm_worker::InferResult;
 
     let result = InferResult {
         request_id: "req-1".to_string(),

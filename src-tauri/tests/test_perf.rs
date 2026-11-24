@@ -13,7 +13,7 @@ use tempfile::tempdir;
 #[test]
 #[serial]
 fn test_perf_sqlite_write_latency() {
-    use st6_trainer_lib::db::{init_schema, open_db_at, insert_match, MatchSummary};
+    use st6_trainer_lib::db::{MatchSummary, init_schema, insert_match, open_db_at};
 
     let dir = tempdir().expect("tempdir");
     let db_path = dir.path().join("perf.db");
@@ -51,7 +51,7 @@ fn test_perf_sqlite_write_latency() {
 #[test]
 #[serial]
 fn test_perf_sqlite_batch_write_latency() {
-    use st6_trainer_lib::db::{init_schema, open_db_at, insert_match, MatchSummary};
+    use st6_trainer_lib::db::{MatchSummary, init_schema, insert_match, open_db_at};
 
     let dir = tempdir().expect("tempdir");
     let db_path = dir.path().join("perf_batch.db");
@@ -93,11 +93,8 @@ fn test_perf_sqlite_batch_write_latency() {
 #[test]
 #[serial]
 fn test_perf_frame_data_import_all_characters() {
-    use st6_trainer_lib::db::{init_schema, open_db_at, upsert_move, MoveRecord};
+    use st6_trainer_lib::db::{init_schema, open_db_at, upsert_move};
     use st6_trainer_lib::frame_data_importer::build_move_record;
-    use st6_trainer_lib::frame_data_importer::{
-        FrameDataCommand, FrameDataDriveGauge, FrameDataFrame, FrameDataMove,
-    };
 
     let dir = tempdir().expect("tempdir");
     let db_path = dir.path().join("perf_import.db");
@@ -110,7 +107,12 @@ fn test_perf_frame_data_import_all_characters() {
     let json_files: Vec<_> = fs::read_dir(&bundled_dir)
         .expect("read frame_data dir")
         .filter_map(|e| e.ok())
-        .filter(|e| e.path().extension().map(|ext| ext == "json").unwrap_or(false))
+        .filter(|e| {
+            e.path()
+                .extension()
+                .map(|ext| ext == "json")
+                .unwrap_or(false)
+        })
         .collect();
 
     let start = Instant::now();
@@ -160,7 +162,7 @@ fn test_perf_frame_data_import_all_characters() {
 #[test]
 #[serial]
 fn test_perf_config_save_load_latency() {
-    use st6_trainer_lib::config::{save_app_config_to_home, load_app_config_from_home, AppConfig};
+    use st6_trainer_lib::config::{AppConfig, load_app_config_from_home, save_app_config_to_home};
 
     let cfg = AppConfig::default();
 
@@ -191,7 +193,7 @@ fn test_perf_config_save_load_latency() {
 #[test]
 #[serial]
 fn test_perf_rag_prompt_render_latency() {
-    use st6_trainer_lib::db::{init_schema, open_db_at, insert_match, MatchSummary};
+    use st6_trainer_lib::db::{MatchSummary, init_schema, insert_match, open_db_at};
     use st6_trainer_lib::rag::RagEngine;
     use std::path::PathBuf;
 
@@ -224,7 +226,9 @@ fn test_perf_rag_prompt_render_latency() {
 
     let start = Instant::now();
     let conn = open_db_at(&db_path).expect("open_db_at");
-    let result = engine.render_analyze_damage(&conn, "perf-rag-match").expect("render");
+    let result = engine
+        .render_analyze_damage(&conn, "perf-rag-match")
+        .expect("render");
     let elapsed = start.elapsed();
     drop(conn);
 
@@ -259,7 +263,7 @@ fn test_perf_estimate_tokens_speed() {
 #[test]
 #[serial]
 fn test_perf_move_upsert_batch() {
-    use st6_trainer_lib::db::{init_schema, open_db_at, upsert_move, MoveRecord};
+    use st6_trainer_lib::db::{MoveRecord, init_schema, open_db_at, upsert_move};
 
     let dir = tempdir().expect("tempdir");
     let db_path = dir.path().join("perf_upsert.db");

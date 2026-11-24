@@ -9,7 +9,7 @@ use tempfile::tempdir;
 #[test]
 #[serial]
 fn test_e2e_scan_to_db_round_trip() {
-    use st6_trainer_lib::db::{get_match, init_schema, open_db_at, insert_match, MatchSummary};
+    use st6_trainer_lib::db::{MatchSummary, get_match, init_schema, open_db_at};
     use st6_trainer_lib::pipeline::{
         InvariantResult, JsonlFrameTelemetry, JsonlInputEvent, JsonlMoveEvent, run_pipeline,
     };
@@ -111,7 +111,11 @@ fn test_e2e_scan_to_db_round_trip() {
     )
     .expect("run_pipeline");
 
-    assert!(result.passed, "Invariants should pass: {:?}", result.violations);
+    assert!(
+        result.passed,
+        "Invariants should pass: {:?}",
+        result.violations
+    );
     assert!(result.violations.is_empty());
 
     // 5. Verify data was persisted in SQLite
@@ -134,8 +138,8 @@ fn test_e2e_scan_to_db_round_trip() {
         assert_eq!(inputs.len(), 1);
         assert_eq!(inputs[0].player, "P1");
 
-        let move_events = st6_trainer_lib::db::get_move_events(&conn, "e2e-match-001")
-            .expect("get_move_events");
+        let move_events =
+            st6_trainer_lib::db::get_move_events(&conn, "e2e-match-001").expect("get_move_events");
         assert_eq!(move_events.len(), 1);
         assert_eq!(move_events[0].damage_p2, Some(300));
 
@@ -166,11 +170,11 @@ fn test_e2e_scan_to_db_round_trip() {
 #[test]
 #[serial]
 fn test_e2e_pipeline_invariant_violations_detected() {
+    use st6_trainer_lib::db::MatchSummary;
     use st6_trainer_lib::db::{init_schema, open_db_at};
     use st6_trainer_lib::pipeline::{
         JsonlFrameTelemetry, JsonlInputEvent, JsonlMoveEvent, run_pipeline,
     };
-    use st6_trainer_lib::db::MatchSummary;
 
     let dir = tempdir().expect("tempdir");
     let db_path = dir.path().join("e2e_invariant.db");
@@ -278,8 +282,16 @@ fn test_e2e_pipeline_invariant_violations_detected() {
         .violations
         .iter()
         .any(|v| v.contains("empty directions and buttons"));
-    assert!(has_hp_violation, "Should detect HP out of range: {:?}", result.violations);
-    assert!(has_frame_violation, "Should detect frame_start > frame_end: {:?}", result.violations);
+    assert!(
+        has_hp_violation,
+        "Should detect HP out of range: {:?}",
+        result.violations
+    );
+    assert!(
+        has_frame_violation,
+        "Should detect frame_start > frame_end: {:?}",
+        result.violations
+    );
     assert!(
         has_empty_input_violation,
         "Should detect empty directions/buttons: {:?}",
@@ -292,7 +304,7 @@ fn test_e2e_pipeline_invariant_violations_detected() {
 #[test]
 #[serial]
 fn test_e2e_rag_prompt_generation_from_db() {
-    use st6_trainer_lib::db::{init_schema, open_db_at, insert_match, MatchSummary};
+    use st6_trainer_lib::db::{MatchSummary, init_schema, insert_match, open_db_at};
     use st6_trainer_lib::rag::RagEngine;
     use std::path::PathBuf;
 
@@ -327,7 +339,9 @@ fn test_e2e_rag_prompt_generation_from_db() {
     // analyze_damage
     {
         let conn = open_db_at(&db_path).expect("open_db_at");
-        let result = engine.render_analyze_damage(&conn, "e2e-rag-match").expect("render");
+        let result = engine
+            .render_analyze_damage(&conn, "e2e-rag-match")
+            .expect("render");
         assert!(!result.prompt.is_empty());
         assert!(result.prompt.contains("A.K.I."));
         assert!(result.prompt.contains("Ed"));
@@ -349,7 +363,9 @@ fn test_e2e_rag_prompt_generation_from_db() {
     // training_menu
     {
         let conn = open_db_at(&db_path).expect("open_db_at");
-        let result = engine.render_training_menu(&conn, "e2e-rag-match").expect("render");
+        let result = engine
+            .render_training_menu(&conn, "e2e-rag-match")
+            .expect("render");
         assert!(!result.prompt.is_empty());
         drop(conn);
     }
@@ -415,9 +431,17 @@ fn test_e2e_frame_data_import_to_db() {
     let json_files: Vec<_> = fs::read_dir(&bundled_dir)
         .expect("read frame_data dir")
         .filter_map(|e| e.ok())
-        .filter(|e| e.path().extension().map(|ext| ext == "json").unwrap_or(false))
+        .filter(|e| {
+            e.path()
+                .extension()
+                .map(|ext| ext == "json")
+                .unwrap_or(false)
+        })
         .collect();
-    assert!(!json_files.is_empty(), "Should have bundled frame_data JSON files");
+    assert!(
+        !json_files.is_empty(),
+        "Should have bundled frame_data JSON files"
+    );
 
     // Verify at least luke.json parses
     let luke_path = bundled_dir.join("luke.json");
@@ -454,7 +478,11 @@ fn test_e2e_llm_worker_status_without_binary() {
     let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
     let result = rt.block_on(worker.start());
     assert!(result.is_err(), "Starting nonexistent worker should fail");
-    assert!(result.unwrap_err().contains("Failed to spawn worker subprocess"));
+    assert!(
+        result
+            .unwrap_err()
+            .contains("Failed to spawn worker subprocess")
+    );
 }
 
 #[test]

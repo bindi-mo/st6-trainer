@@ -3,7 +3,6 @@
 //! scan result saving, WAL mode, and RAG query functions.
 
 use serial_test::serial;
-use std::fs;
 use tempfile::tempdir;
 
 #[test]
@@ -404,7 +403,7 @@ fn test_db_save_scan_result_transaction() {
 fn test_db_get_match_timeline() {
     let dir = tempdir().expect("tempdir");
     let db_path = dir.path().join("test.db");
-    let mut conn = st6_trainer_lib::db::open_db_at(&db_path).expect("open_db_at");
+    let conn = st6_trainer_lib::db::open_db_at(&db_path).expect("open_db_at");
     st6_trainer_lib::db::init_schema(&conn).expect("init_schema");
 
     let record = st6_trainer_lib::db::MatchSummary {
