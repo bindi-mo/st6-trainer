@@ -688,6 +688,113 @@ pub fn save_scan_result(
     Ok(())
 }
 
+/// Character summary for the character selector dropdown.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CharacterSummary {
+    pub character_id: String,
+    pub character_name: String,
+}
+
+/// List distinct characters available in the moves table.
+pub fn list_characters(conn: &Connection) -> Result<Vec<CharacterSummary>, String> {
+    let mut stmt = conn.prepare(
+        "SELECT DISTINCT character_id, character_name
+         FROM moves
+         ORDER BY character_name",
+    ).map_err(|e| format!("Failed to prepare list_characters: {}", e))?;
+
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(CharacterSummary {
+                character_id: row.get(0)?,
+                character_name: row.get(1)?,
+            })
+        })
+        .map_err(|e| format!("Failed to query characters: {}", e))?;
+
+    let mut characters = Vec::new();
+    for row in rows {
+        characters.push(row.map_err(|e| format!("Failed to read character row: {}", e))?);
+    }
+    Ok(characters)
+}
+
+/// A single timeline entry (either a move event or an input event).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TimelineEntry {
+    pub frame_start: i32,
+    pub frame_end: i32,
+    pub round_index: i32,
+    pub entry_type: String, // "move" or "input"
+    pub player: String,
+    pub description: String,
+    pub move_name: Option<String>,
+    pub damage_p1: Option<i32>,
+    pub damage_p2: Option<i32>,
+    pub conf: Option<f64>,
+}
+
+/// Full timeline for a match: move events + input events merged chronologically.
+pub fn get_match_timeline(
+    conn: &Connection,
+    match_id: &str,
+) -> Result<Vec<TimelineEntry>, String> {
+    let mut entries: Vec<TimelineEntry> = Vec::new();
+
+    // Move events
+    let move_events = get_move_events(conn, match_id)?;
+    for m in move_events {
+        let description = if let Some(ref mv) = m.attack_property_p1 {
+            format!("{} (P1)", mv)
+        } else if let Some(ref mv) = m.attack_property_p2 {
+            format!("{} (P2)", mv)
+        } else {
+            "Move event".to_string()
+        };
+        entries.push(TimelineEntry {
+            frame_start: m.frame_start,
+            frame_end: m.frame_end,
+            round_index: m.round_index,
+            entry_type: "move".to_string(),
+            player: "P1/P2".to_string(),
+            description,
+            move_name: m.attack_property_p1.or_else(|| m.attack_property_p2.clone()),
+            damage_p1: m.damage_p1,
+            damage_p2: m.damage_p2,
+            conf: m.conf,
+        });
+    }
+
+    // Input events
+    let input_events = get_input_events(conn, match_id)?;
+    for e in input_events {
+        let dirs = e.directions.join(", ");
+        let btns = e.buttons.join(", ");
+        let description = format!("{} {} [{}] [{}]", e.player, dirs, btns, e.round_index);
+        entries.push(TimelineEntry {
+            frame_start: e.frame_start,
+            frame_end: e.frame_end,
+            round_index: e.round_index,
+            entry_type: "input".to_string(),
+            player: e.player,
+            description,
+            move_name: None,
+            damage_p1: None,
+            damage_p2: None,
+            conf: None,
+        });
+    }
+
+    // Sort by frame_start, then by entry_type (move before input at same frame)
+    entries.sort_by(|a, b| {
+        a.frame_start
+            .cmp(&b.frame_start)
+            .then_with(|| a.entry_type.cmp(&b.entry_type))
+    });
+
+    Ok(entries)
+}
+
 /// Upsert a single move record into the `moves` table.
 ///
 /// Uses `INSERT OR REPLACE` keyed on `move_id` (character_id + control_type + move_name).

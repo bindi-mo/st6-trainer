@@ -287,6 +287,32 @@ pub async fn rag_get_moves(
     crate::db::get_moves_for_character(&conn, &character_id, &control_type)
 }
 
+// ===== Phase 14: Frontend feature expansion commands =====
+
+/// List distinct character IDs available in the moves table.
+#[tauri::command]
+pub async fn get_characters() -> Result<Vec<crate::db::CharacterSummary>, String> {
+    let conn = crate::db::open_db().map_err(|e| e.to_string())?;
+    crate::db::init_schema(&conn).map_err(|e| e.to_string())?;
+    crate::db::list_characters(&conn)
+}
+
+/// Get the full timeline for a match: move events + input events merged chronologically.
+#[tauri::command]
+pub async fn get_match_timeline(match_id: String) -> Result<Vec<crate::db::TimelineEntry>, String> {
+    let conn = crate::db::open_db().map_err(|e| e.to_string())?;
+    crate::db::init_schema(&conn).map_err(|e| e.to_string())?;
+    crate::db::get_match_timeline(&conn, &match_id)
+}
+
+/// Get frame telemetry for a match (for timeline frame-level detail).
+#[tauri::command]
+pub async fn get_match_telemetry(match_id: String) -> Result<Vec<crate::db::FrameTelemetryRecord>, String> {
+    let conn = crate::db::open_db().map_err(|e| e.to_string())?;
+    crate::db::init_schema(&conn).map_err(|e| e.to_string())?;
+    crate::db::get_frame_telemetry(&conn, &match_id)
+}
+
 // ===== Phase 9: LLM Worker Commands =====
 
 /// Global LLM worker instance.

@@ -7,6 +7,11 @@ import remarkGfm from "remark-gfm";
 import "./App.css";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { useToast } from "./hooks/useToast";
+import { HeaderControls } from "./components/HeaderControls";
+import { TimelineNav } from "./components/TimelineNav";
+import { StatsDashboard } from "./components/StatsDashboard";
+import { MatchHistory } from "./components/MatchHistory";
+import { FrameDataModal } from "./components/FrameDataModal";
 
 interface VideoScanResult {
   video_path: string;
@@ -83,6 +88,24 @@ interface DownloadProgress {
   total_bytes: number | null;
 }
 
+interface CharacterSummary {
+  character_id: string;
+  character_name: string;
+}
+
+interface MatchSummary {
+  id: string;
+  played_at: string | null;
+  my_character: string;
+  opponent_character: string;
+  my_control_type: string;
+  opponent_control_type: string;
+  total_rounds: number;
+  result: string;
+  source_video_path: string | null;
+  scan_config_version: string | null;
+}
+
 function App() {
   // ===== Scanner state (existing) =====
   const [selectedVideo, setSelectedVideo] = useState<string | null>(null);
@@ -107,6 +130,17 @@ function App() {
   const [reportError, setReportError] = useState<string | null>(null);
   const [isGeneratingReport, setIsGeneratingReport] = useState(false);
   const [modelDownloadProgress, setModelDownloadProgress] = useState<DownloadProgress | null>(null);
+
+  // ===== Phase 14: Frontend feature state =====
+  const [characters, setCharacters] = useState<CharacterSummary[]>([]);
+  const [charactersLoading, setCharactersLoading] = useState(false);
+  const [myCharacter, setMyCharacter] = useState("");
+  const [opponentCharacter, setOpponentCharacter] = useState("");
+  const [controlType, setControlType] = useState("classic");
+  const [deviceType, setDeviceType] = useState("pad");
+  const [activeMatchId, setActiveMatchId] = useState<string | null>(null);
+  const [selectedMove, setSelectedMove] = useState<{ characterId: string; controlType: string; moveName: string } | null>(null);
+  const [frameDataModalOpen, setFrameDataModalOpen] = useState(false);
 
   const { toasts, toast, dismiss } = useToast();
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -146,6 +180,24 @@ function App() {
     };
   }, []);
 
+  // Load characters on startup
+  useEffect(() => {
+    let mounted = true;
+    async function loadCharacters() {
+      setCharactersLoading(true);
+      try {
+        const data = await invoke<CharacterSummary[]>("get_characters");
+        if (mounted) setCharacters(data);
+      } catch (e) {
+        console.error("[App] Failed to load characters:", e);
+      } finally {
+        if (mounted) setCharactersLoading(false);
+      }
+    }
+    loadCharacters();
+    return () => { mounted = false; };
+  }, []);
+
   // ===== Scanner functions (existing) =====
   async function selectVideo() {
     const filePath = await open({
@@ -160,6 +212,7 @@ function App() {
       setManualBottomY(null);
       setManualVerified(null);
       setCalibError(null);
+      setActiveMatchId(null);
     }
   }
 
@@ -174,6 +227,7 @@ function App() {
     setManualBottomY(null);
     setManualVerified(null);
     setCalibError(null);
+    setActiveMatchId(null);
 
     try {
       console.log("[Frontend] Invoking scan_video command...");
@@ -186,6 +240,10 @@ function App() {
         setManualTopY(meta.top_y_offset_px);
         setManualBottomY(meta.bottom_y_offset_px);
         setManualVerified(meta.manual_verified);
+        setActiveMatchId(meta.match_id);
+        setMyCharacter(meta.character_name_p1);
+        setOpponentCharacter(meta.character_name_p2);
+        setControlType(meta.control_type_p1);
       }
     } catch (error) {
       console.error("[Frontend] Scan error:", error);
@@ -241,6 +299,21 @@ function App() {
     } finally {
       setCalibSaving(false);
     }
+  }
+
+  // ===== Phase 14: Match history load =====
+  async function loadMatchFromHistory(match: MatchSummary) {
+    setActiveMatchId(match.id);
+    setMyCharacter(match.my_character);
+    setOpponentCharacter(match.opponent_character);
+    setControlType(match.my_control_type);
+    toast("試合を読み込みました: " + match.id, "info");
+  }
+
+  // ===== Phase 14: Frame data modal =====
+  function openFrameDataModal(characterId: string, ctrlType: string, moveName: string) {
+    setSelectedMove({ characterId, controlType: ctrlType, moveName });
+    setFrameDataModalOpen(true);
   }
 
   // ===== LLM functions =====
@@ -372,41 +445,24 @@ function App() {
     }
   }
 
-  // ===== Render helpers =====
-  const statusLabel = (s: WorkerStatus | null) => {
-    if (!s) return "未初期化";
-    switch (s.state) {
-      case "Ready": return "準備完了";
-      case "Busy": return "処理中";
-      case "Error": return "エラー";
-      case "LoadingModel": return "モデル読込中";
-      case "Connecting": return "接続中";
-      case "Starting": return "起動中";
-      case "ShuttingDown": return "停止中";
-      case "Uninitialized": return "未初期化";
-      default: return s.state;
-    }
-  };
-
   return (
     <main className="container">
-      <header className="app-header">
-        <div className="header-title">
-          <h1>ST6 Trainer</h1>
-          <div className="header-subtitle">Street Fighter 6 対戦分析・トレーニング支援</div>
-        </div>
-        <div className="header-controls">
-          <span className={`status-indicator ${workerStatus ? "ready" : "offline"}`}>
-            {workerStatus ? `LLM: ${statusLabel(workerStatus)}` : "LLM: 未初期化"}
-          </span>
-          <button onClick={refreshWorkerStatus}>
-            状態更新
-          </button>
-          <button onClick={selectVideo} disabled={isScanning}>
-            🎬 動画読込
-          </button>
-        </div>
-      </header>
+      <HeaderControls
+        onSelectVideo={selectVideo}
+        isScanning={isScanning}
+        workerStatus={workerStatus}
+        refreshWorkerStatus={refreshWorkerStatus}
+        myCharacter={myCharacter}
+        setMyCharacter={setMyCharacter}
+        opponentCharacter={opponentCharacter}
+        setOpponentCharacter={setOpponentCharacter}
+        controlType={controlType}
+        setControlType={setControlType}
+        deviceType={deviceType}
+        setDeviceType={setDeviceType}
+        characters={characters}
+        charactersLoading={charactersLoading}
+      />
 
       {/* Toasts */}
       <div className="toast-container">
@@ -563,10 +619,27 @@ function App() {
               )}
             </section>
           </ErrorBoundary>
+
+          {/* Phase 14: Timeline navigation */}
+          <TimelineNav
+            matchId={activeMatchId}
+            controlType={controlType}
+            onJumpToFrame={(frame) => {
+              // Scroll to or highlight the frame in the scanner results
+              console.log("[App] Jump to frame:", frame);
+              toast(`フレーム F${frame} へジャンプ`, "info");
+            }}
+            onOpenFrameData={(characterId, ctrlType, moveName) => {
+              openFrameDataModal(characterId, ctrlType, moveName);
+            }}
+          />
         </div>
 
-        {/* Right pane: LLM Chat + Report */}
+        {/* Right pane: Match history + LLM Chat + Report + Stats */}
         <div className="pane right-pane">
+          {/* Phase 14: Match history sidebar */}
+          <MatchHistory onLoadMatch={loadMatchFromHistory} />
+
           <ErrorBoundary
             fallback={({ error, reset }) => (
               <div className="section error">
@@ -683,6 +756,9 @@ function App() {
               ) : null}
             </section>
           </ErrorBoundary>
+
+          {/* Phase 14: Statistics dashboard */}
+          <StatsDashboard matchId={activeMatchId} />
         </div>
       </div>
 
@@ -709,6 +785,15 @@ function App() {
           </div>
         </div>
       )}
+
+      {/* Phase 14: Frame data reference modal */}
+      <FrameDataModal
+        open={frameDataModalOpen}
+        onClose={() => setFrameDataModalOpen(false)}
+        characterId={selectedMove?.characterId ?? ""}
+        controlType={selectedMove?.controlType ?? ""}
+        moveName={selectedMove?.moveName ?? ""}
+      />
     </main>
   );
 }

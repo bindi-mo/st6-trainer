@@ -59,6 +59,10 @@ pub fn run() {
             commands::rag_get_moves,
             // Phase 13: Frame data master JSON import
             commands::import_frame_data,
+            // Phase 14: Frontend feature expansion commands
+            commands::get_characters,
+            commands::get_match_timeline,
+            commands::get_match_telemetry,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

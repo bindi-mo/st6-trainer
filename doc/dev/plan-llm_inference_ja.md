@@ -7,7 +7,7 @@
 1. **LLM 推論モジュール** (§4) — **子プロセス方式 (llama.cpp + LFM3-1.7B GGUF, Named Pipe IPC)**
 2. **SQLite 構造化対戦データベース** (§3.1) — `st6_trainer.db` への本格統合 (match_metadata テーブル等)
 3. **フレームデータマスター JSON インポート** (§3.2) — キャラクターフレームデータの SQLite 取り込み
-4. **フロントエンド機能** (§5) — キャラ選択、タイムラインナビ、統計ダッシュボード、レポートビューア
+4. **フロントエンド機能** (§5) — キャラ選択、タイムラインナビ、統計ダッシュボード、レポートビューア (Phase 14 完了)
 5. **設定ファイル管理** — `$HOME/.st6-trainer/config.json`
 6. **モデルダウンロード・管理** — `$HOME/.st6-trainer/models/`
 
@@ -36,7 +36,7 @@
 | **11** | LLM Tauri コマンド・フロントエンド UI | `llm_infer`/`llm_stream` コマンド、チャット/レポート UI | Phase 9, 10 | 完了 |
 | **12** | SQLite データベース本格統合 | `match_metadata` テーブル、フレームデータマスター import、試合記録保存、user_version マイグレーション | Phase 0-7 | 完了 |
 | **13** | フレームデータマスター JSON インポート | `frame_data/*.json` → SQLite `moves` テーブル (差分インポート) | Phase 12 | 完了 |
-| **14** | フロントエンド機能拡張 | キャラ選択、タイムラインナビ、統計ダッシュボード | Phase 11, 12 | 未実装 |
+| **14** | フロントエンド機能拡張 | キャラ選択、タイムラインナビ、統計ダッシュボード | Phase 11, 12 | 完了 |
 | **15** | 統合・検証・リリース | E2E テスト、リリースビルド | Phase 8-14 | 未実装 |
 
 ---
@@ -446,24 +446,26 @@ CREATE INDEX IF NOT EXISTS idx_moves_character_control ON moves(character_id, co
 
 ### 作業項目
 
-| # | タスク | ファイル | 内容 |
-|---|--------|----------|------|
-| 14.1 | ヘッダーコントロール | `src/App.tsx` | 動画読込ボタン、LLM状態インジケーター、キャラ選択×2、操作系選択、デバイス選択 |
-| 14.2 | キャラクター選択 | `src/App.tsx` | `moves` テーブルからキャラ一覧取得、自キャラ/敵キャラ別ドロップダウン |
-| 14.3 | 操作系選択 | `src/App.tsx` | クラシック/モダン/モダンマニュアル選択、選択に応じてフレームデータフィルタ |
-| 14.4 | デバイス選択 | `src/App.tsx` | パッド/アケコン/レバーレス選択、トレモメニューの操作表記に反映 |
-| 14.5 | タイムラインナビ | `src/App.tsx` | 検出イベント (move_events + input_events) を時系列表示、クリックで該当フレーム/レポートへジャンプ |
-| 14.6 | レポート詳細エリア | `src/App.tsx` | Markdown レンダラー (`react-markdown`)、LLM 分析結果・手動入力メモ表示 |
-| 14.7 | 統計ダッシュボード | `src/App.tsx` | タブ切替: 被弾原因内訳 / 反撃成功率 / トレモメニュー達成率 / 入力傾向 |
-| 14.8 | 試合履歴サイドバー | `src/App.tsx` | `matches` テーブルから過去試合一覧 (日時・キャラ・結果)、クリックで読み込み |
-| 14.9 | フレームデータ参照モーダル | `src/App.tsx` | 技名クリックでフレームデータ詳細表示 (発生・持続・硬直・有利不利・キャンセル) |
+| # | タスク | ファイル | 内容 | 状態 |
+|---|--------|----------|------|------|
+| 14.1 | ヘッダーコントロール | `src/components/HeaderControls.tsx` | 動画読込ボタン、LLM状態インジケーター、キャラ選択×2、操作系選択、デバイス選択 | 完了 |
+| 14.2 | キャラクター選択 | `src/components/HeaderControls.tsx` | `moves` テーブルからキャラ一覧取得、自キャラ/敵キャラ別ドロップダウン | 完了 |
+| 14.3 | 操作系選択 | `src/components/HeaderControls.tsx` | クラシック/モダン/モダンマニュアル選択、選択に応じてフレームデータフィルタ | 完了 |
+| 14.4 | デバイス選択 | `src/components/HeaderControls.tsx` | パッド/アケコン/レバーレス選択、トレモメニューの操作表記に反映 | 完了 |
+| 14.5 | タイムラインナビ | `src/components/TimelineNav.tsx` | 検出イベント (move_events + input_events) を時系列表示、クリックで該当フレーム/レポートへジャンプ | 完了 |
+| 14.6 | レポート詳細エリア | `src/App.tsx` | Markdown レンダラー (`react-markdown`)、LLM 分析結果・手動入力メモ表示 | 完了 |
+| 14.7 | 統計ダッシュボード | `src/components/StatsDashboard.tsx` | タブ切替: 被弾原因内訳 / 反撃成功率 / トレモメニュー達成率 / 入力傾向 | 完了 |
+| 14.8 | 試合履歴サイドバー | `src/components/MatchHistory.tsx` | `matches` テーブルから過去試合一覧 (日時・キャラ・結果)、クリックで読み込み | 完了 |
+| 14.9 | フレームデータ参照モーダル | `src/components/FrameDataModal.tsx` | 技名クリックでフレームデータ詳細表示 (発生・持続・硬直・有利不利・キャンセル) | 完了 |
 
 ### 成果物
-- ヘッダー: 動画読込・LLM状態・キャラ/操作系/デバイス選択
-- 左ペイン: タイムラインナビ (イベント一覧・ジャンプ)
-- 右ペイン: レポート詳細 (Markdown) / 統計ダッシュボード (タブ) / フレームデータ参照
-- サイドバー: 試合履歴一覧・読み込み
-- 全コンポーネントが `App.tsx` 内の関数コンポーネントとして分割済み
+- ヘッダー: 動画読込・LLM状態・キャラ/操作系/デバイス選択 (`src/components/HeaderControls.tsx`)
+- 左ペイン: タイムラインナビ (イベント一覧・ジャンプ) (`src/components/TimelineNav.tsx`)
+- 右ペイン: レポート詳細 (Markdown) / 統計ダッシュボード (タブ) / フレームデータ参照 (`src/components/StatsDashboard.tsx`)
+- サイドバー: 試合履歴一覧・読み込み (`src/components/MatchHistory.tsx`)
+- フレームデータ参照モーダル (`src/components/FrameDataModal.tsx`)
+- 全コンポーネントが関数コンポーネントとして分割済み、`App.tsx` はオーケストレータとして整理
+- バックエンド: `get_characters`、`get_match_timeline`、`get_match_telemetry` コマンド、`list_characters`/`get_match_timeline` DB 関数
 
 ---
 
