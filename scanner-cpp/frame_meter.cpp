@@ -20,6 +20,7 @@ namespace st6
         config_.roi_y_end = 1080;
         stable_count_ = 0;
         last_frame_index_ = -1;
+        templates_initialized_ = false;
     }
 
     FrameMeterDetector::~FrameMeterDetector() {}
@@ -32,36 +33,23 @@ namespace st6
     void FrameMeterDetector::set_template_pack_path(const std::string &path)
     {
         template_pack_path_ = path;
+        templates_initialized_ = false;
     }
 
-    void FrameMeterDetector::reset()
+    void FrameMeterDetector::init_templates()
     {
-        latch_buffer_.clear();
-        stable_count_ = 0;
-        last_frame_index_ = -1;
-    }
+        if (templates_initialized_)
+            return;
 
-    int FrameMeterDetector::read_digit(const Mat &roi, int /*frame_index*/)
-    {
-        // num/ テンプレート (0-9, F, minus) でテンプレートマッチング
-        // テンプレートパスは scanner.cpp から設定済みの template_pack_path_ を使用
         namespace fs = std::filesystem;
         fs::path num_dir = fs::path(template_pack_path_) / "num";
         if (!fs::exists(num_dir))
         {
-            return -1; // テンプレートディレクトリが存在しない
+            templates_initialized_ = true;
+            return;
         }
 
-        Mat roi_gray;
-        if (roi.channels() == 3)
-            cvtColor(roi, roi_gray, COLOR_BGR2GRAY);
-        else
-            roi_gray = roi.clone();
-
         const vector<string> digit_names = {"0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "F", "minus"};
-
-        double best_conf = 0.0;
-        string best_label;
 
         for (const auto &name : digit_names)
         {
@@ -78,6 +66,45 @@ namespace st6
                 cvtColor(tmpl, tmpl_gray, COLOR_BGR2GRAY);
             else
                 tmpl_gray = tmpl.clone();
+
+            digit_templates_[name] = tmpl_gray;
+        }
+
+        templates_initialized_ = true;
+    }
+
+    void FrameMeterDetector::reset()
+    {
+        latch_buffer_.clear();
+        stable_count_ = 0;
+        last_frame_index_ = -1;
+    }
+
+    int FrameMeterDetector::read_digit(const Mat &roi, int /*frame_index*/)
+    {
+        // キャッシュされた数字テンプレートでテンプレートマッチング
+        // テンプレートは init_templates() で初期化時に1回読み込み済み
+        if (!templates_initialized_)
+            init_templates();
+
+        Mat roi_gray;
+        if (roi.channels() == 3)
+            cvtColor(roi, roi_gray, COLOR_BGR2GRAY);
+        else
+            roi_gray = roi.clone();
+
+        const vector<string> digit_names = {"0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "F", "minus"};
+
+        double best_conf = 0.0;
+        string best_label;
+
+        for (const auto &name : digit_names)
+        {
+            auto it = digit_templates_.find(name);
+            if (it == digit_templates_.end())
+                continue;
+
+            const Mat &tmpl_gray = it->second;
 
             // テンプレートが ROI より大きい場合はスキップ
             if (tmpl_gray.cols > roi_gray.cols || tmpl_gray.rows > roi_gray.rows)

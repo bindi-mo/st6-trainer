@@ -777,6 +777,7 @@ extern "C"
                 impl->input_tracker->set_template_pack_path(impl->template_pack_path);
                 impl->input_tracker->rows_visible = impl->config.rows_visible;
                 impl->input_tracker->input_glyph_threshold = impl->config.threshold_input_glyph;
+                impl->input_tracker->init_templates();
                 impl->input_tracker_initialized = true;
                 cout << "[Scanner] Input tracker initialized" << endl;
             }
@@ -825,6 +826,7 @@ extern "C"
                 fmc.roi_y_end = impl->config.canonical_height;
                 impl->frame_meter_detector->set_config(fmc);
                 impl->frame_meter_detector->set_template_pack_path(impl->template_pack_path);
+                impl->frame_meter_detector->init_templates();
                 impl->frame_meter_detector_initialized = true;
                 cout << "[Scanner] Frame meter detector initialized" << endl;
             }

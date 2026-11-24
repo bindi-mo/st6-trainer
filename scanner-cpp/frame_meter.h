@@ -3,6 +3,7 @@
 
 #include "scanner_api.h"
 #include <opencv2/core.hpp>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -42,6 +43,9 @@ namespace st6
         // テンプレートパックパスを設定
         void set_template_pack_path(const std::string &path);
 
+        // テンプレートを初期化時に1回読み込んでキャッシュする
+        void init_templates();
+
         // フレームからフレームメーターを検出
         // 3フレームラッチ: 同一読み取りが3フレーム連続で確定した場合のみ出力
         FrameMeterReading detect(const cv::Mat &frame, int frame_index);
@@ -55,12 +59,16 @@ namespace st6
         // テンプレートパックパス (num/ テンプレート用)
         std::string template_pack_path_;
 
+        // 数字テンプレートキャッシュ (ラベル -> グレースケール画像)
+        std::map<std::string, cv::Mat> digit_templates_;
+        bool templates_initialized_;
+
         // ラッチ用バッファ
         std::vector<FrameMeterReading> latch_buffer_;
         int stable_count_;
         int last_frame_index_;
 
-        // テンプレートマッチングで数字を読み取り
+        // テンプレートマッチングで数字を読み取り (キャッシュ使用)
         int read_digit(const cv::Mat &roi, int frame_index);
 
         // フレームメーター領域から startup/active/recovery を読み取り

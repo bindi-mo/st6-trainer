@@ -12,17 +12,69 @@ using namespace std;
 namespace st6
 {
 
-    InputTracker::InputTracker() {}
+    InputTracker::InputTracker()
+    {
+        templates_initialized_ = false;
+    }
 
     InputTracker::~InputTracker() {}
 
     void InputTracker::set_template_pack_path(const std::string &path)
     {
         template_pack_path_ = path;
+        templates_initialized_ = false;
+    }
+
+    void InputTracker::init_templates()
+    {
+        if (templates_initialized_)
+            return;
+
+        // 既知のテンプレートセットを事前読み込みしてキャッシュ
+        const std::vector<std::pair<std::string, std::string>> template_set = {
+            {"dir", "1"}, {"dir", "2"}, {"dir", "3"}, {"dir", "4"}, {"dir", "6"}, {"dir", "7"}, {"dir", "8"}, {"dir", "9"},
+            {"num", "0"}, {"num", "1"}, {"num", "2"}, {"num", "3"}, {"num", "4"}, {"num", "5"}, {"num", "6"}, {"num", "7"}, {"num", "8"}, {"num", "9"}, {"num", "F"}, {"num", "minus"},
+            {"btn_classic", "LP"}, {"btn_classic", "MP"}, {"btn_classic", "HP"}, {"btn_classic", "LK"}, {"btn_classic", "MK"}, {"btn_classic", "HK"},
+            {"btn_modern", "L"}, {"btn_modern", "M"}, {"btn_modern", "H"}, {"btn_modern", "SP"}, {"btn_modern", "AUTO"}, {"btn_modern", "DP"},
+            {"btn_classic", "classic"}, {"btn_modern", "modern"},
+        };
+
+        for (const auto &entry : template_set)
+        {
+            const std::string &subdir = entry.first;
+            const std::string &name = entry.second;
+            std::string cache_key = subdir + "/" + name;
+
+            // 既にキャッシュ済みならスキップ
+            if (template_cache_.find(cache_key) != template_cache_.end())
+                continue;
+
+            Mat img = load_template(subdir, name);
+            if (!img.empty())
+            {
+                Mat img_gray;
+                if (img.channels() == 3)
+                    cvtColor(img, img_gray, COLOR_BGR2GRAY);
+                else
+                    img_gray = img.clone();
+                template_cache_[cache_key] = img_gray;
+            }
+        }
+
+        templates_initialized_ = true;
     }
 
     Mat InputTracker::load_template(const std::string &subdir, const std::string &name)
     {
+        // キャッシュから返す
+        std::string cache_key = subdir + "/" + name;
+        auto it = template_cache_.find(cache_key);
+        if (it != template_cache_.end())
+        {
+            return it->second.clone();
+        }
+
+        // キャッシュ未初期化時のフォールバック: ディスクから直接読み込み
         string path = template_pack_path_ + "/" + subdir + "/" + name + ".png";
         Mat img = imread(path, IMREAD_COLOR);
         if (img.empty())
@@ -38,6 +90,9 @@ namespace st6
                                                      double threshold,
                                                      int max_matches)
     {
+        // テンプレートキャッシュを初期化 (1回のみ)
+        init_templates();
+
         vector<GlyphMatch> results;
 
         // テンプレートディレクトリ内のファイルを走査（ここでは既知のファイル名を直接指定）
@@ -63,17 +118,14 @@ namespace st6
 
         for (const auto &name : template_names)
         {
+            // キャッシュからテンプレートを取得 (ディスク読み込みなし)
             Mat tmpl = load_template(subdir, name);
             if (tmpl.empty())
                 continue;
 
-            // テンプレートをグレースケールに変換
-            Mat tmpl_gray, roi_gray;
-            if (tmpl.channels() == 3)
-                cvtColor(tmpl, tmpl_gray, COLOR_BGR2GRAY);
-            else
-                tmpl_gray = tmpl.clone();
-
+            // テンプレートはキャッシュ時にグレースケール変換済み
+            Mat tmpl_gray = tmpl;
+            Mat roi_gray;
             if (roi.channels() == 3)
                 cvtColor(roi, roi_gray, COLOR_BGR2GRAY);
             else

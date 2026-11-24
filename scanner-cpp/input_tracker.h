@@ -2,6 +2,7 @@
 
 #include "scanner_api.h"
 #include <opencv2/core.hpp>
+#include <map>
 #include <string>
 #include <vector>
 #include <memory>
@@ -65,6 +66,9 @@ namespace st6
         // テンプレートパスを設定
         void set_template_pack_path(const std::string &path);
 
+        // テンプレートを初期化時に1回読み込んでキャッシュする
+        void init_templates();
+
         // 操作系（classic/modern）を判定（1回のみ実行）
         ControlTypeResult resolve_control_type(const cv::Mat &frame, double threshold);
 
@@ -84,11 +88,15 @@ namespace st6
     private:
         std::string template_pack_path_;
 
-            // 操作系（プレイヤーごと）
-            std::string control_type_p1_;
-            std::string control_type_p2_;
+        // テンプレートキャッシュ (subdir/name -> グレースケール画像)
+        std::map<std::string, cv::Mat> template_cache_;
+        bool templates_initialized_;
 
-        // テンプレート画像を読み込み
+        // 操作系（プレイヤーごと）
+        std::string control_type_p1_;
+        std::string control_type_p2_;
+
+        // テンプレート画像を読み込み (キャッシュから取得)
         cv::Mat load_template(const std::string &subdir, const std::string &name);
 
         // テンプレートマッチングを実行
