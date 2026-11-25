@@ -729,7 +729,7 @@ function App() {
                     <h3>Scan Results</h3>
                     <div className="info-grid">
                       <div><strong>Video:</strong> {scanResult.video_path}</div>
-                      <div><strong>Resolution:</strong> {scanResult.resolution.width}x{scanResult.resolution.height}</div>
+                      <div><strong>Resolution:</strong> {scanResult.resolution ? `${scanResult.resolution.width}x${scanResult.resolution.height}` : "—"}</div>
                       <div><strong>FPS:</strong> {scanResult.fps.toFixed(2)}</div>
                       <div><strong>Total Frames:</strong> {scanResult.total_frames}</div>
                       <div><strong>Duration:</strong> {(scanResult.duration_ms / 1000).toFixed(1)}s</div>
