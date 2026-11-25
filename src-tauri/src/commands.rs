@@ -2,17 +2,19 @@
 //!
 //! Exposes scanner_ffi and pipeline functionality to the frontend.
 
+use crate::cache::{check_cache_exists, load_scan_cache, save_scan_cache, CachedScanResult};
 use crate::pipeline::{InvariantResult, run_pipeline};
 use crate::scanner_ffi::{
     FrameTelemetryOut, InputEventOut, MatchMetadataOut, MoveEventOut, Scanner,
 };
-use serde::Serialize;
-use std::path::PathBuf;
+use chrono::Utc;
+use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tauri::{Emitter, Manager};
 
 /// Result of a scan operation
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ScanResult {
     pub metadata: MatchMetadataOut,
     pub telemetry: Vec<FrameTelemetryOut>,
@@ -22,19 +24,99 @@ pub struct ScanResult {
 }
 
 /// Run a full scan on a video file and return all results.
+/// Checks disk cache first; if valid cache exists, returns cached result instantly.
 #[tauri::command]
 pub async fn scan_video(
     app: tauri::AppHandle,
     video_path: String,
     output_dir: Option<String>,
 ) -> Result<ScanResult, String> {
+    let video_path_buf = Path::new(&video_path);
+
+    // Create scanner to get metadata (needed for cache key)
     let scanner = Scanner::new(&app, &video_path, None).map_err(|e| e.to_string())?;
 
     // Get metadata (initializes input tracker, frame meter detector, etc.)
     let metadata = scanner.get_metadata().map_err(|e| e.to_string())?;
     let metadata_out = MatchMetadataOut::from(metadata);
 
-    // Collect all events in a single pass using scanner_next_all
+    // Check cache before scanning
+    if let Some(cache_key) = check_cache_exists(
+        video_path_buf,
+        &metadata_out.config_version,
+        &metadata_out.template_pack_version,
+    )? {
+        // Cache hit - load and return immediately
+        let cached = load_scan_cache(&cache_key)?;
+        
+        // Emit 100% progress for UI
+        let _ = app.emit("scan-progress", serde_json::json!({
+            "frame_index": cached.metadata.total_frames,
+            "total_frames": cached.metadata.total_frames,
+            "progress_percent": 100.0,
+            "elapsed_ms": 0,
+            "estimated_remaining_ms": 0,
+            "estimated_finish_at": null,
+            "from_cache": true,
+        }));
+
+        // Run invariant pipeline (writes to SQLite via save_scan_result)
+        let db_path = match &output_dir {
+            Some(dir) => PathBuf::from(dir).join("extraction.db"),
+            None => PathBuf::from("extraction.db"),
+        };
+
+        // Build JSONL for pipeline from cached data
+        let telemetry_jsonl: String = cached.telemetry
+            .iter()
+            .map(|t| serde_json::to_string(t).unwrap())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let input_jsonl: String = cached.input_events
+            .iter()
+            .map(|e| serde_json::to_string(e).unwrap())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let move_jsonl: String = cached.move_events
+            .iter()
+            .map(|e| serde_json::to_string(e).unwrap())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let match_record = crate::db::MatchSummary {
+            id: cached.metadata.match_id.clone(),
+            played_at: Some(cached.metadata.extracted_at_utc.clone()),
+            my_character: cached.metadata.character_name_p1.clone(),
+            opponent_character: cached.metadata.character_name_p2.clone(),
+            my_control_type: cached.metadata.control_type_p1.clone(),
+            opponent_control_type: cached.metadata.control_type_p2.clone(),
+            total_rounds: 0,
+            result: String::new(),
+            source_video_path: Some(video_path.clone()),
+            scan_config_version: Some(cached.metadata.config_version.clone()),
+        };
+
+        let invariant_result = run_pipeline(
+            &match_record,
+            &telemetry_jsonl,
+            &input_jsonl,
+            &move_jsonl,
+            &db_path,
+        )
+        .map_err(|e| e.to_string())?;
+
+        return Ok(ScanResult {
+            metadata: cached.metadata,
+            telemetry: cached.telemetry,
+            input_events: cached.input_events,
+            move_events: cached.move_events,
+            invariant_result,
+        });
+    }
+
+    // Cache miss - perform full scan
     let mut telemetry = Vec::new();
     let mut input_events = Vec::new();
     let mut move_events = Vec::new();
@@ -138,13 +220,29 @@ pub async fn scan_video(
     )
     .map_err(|e| e.to_string())?;
 
-    Ok(ScanResult {
-        metadata: metadata_out,
+    let scan_result = ScanResult {
+        metadata: metadata_out.clone(),
         telemetry,
         input_events,
         move_events,
         invariant_result,
-    })
+    };
+
+    // Save to cache after successful scan
+    let cached = CachedScanResult {
+        metadata: metadata_out,
+        telemetry: scan_result.telemetry.clone(),
+        input_events: scan_result.input_events.clone(),
+        move_events: scan_result.move_events.clone(),
+        invariant_result: scan_result.invariant_result.clone(),
+        cached_at: Utc::now().to_rfc3339(),
+        video_sha256: crate::cache::sha256_file(video_path_buf)?,
+        config_version: scan_result.metadata.config_version.clone(),
+        template_pack_version: scan_result.metadata.template_pack_version.clone(),
+    };
+    let _ = save_scan_cache(&cached); // Ignore cache save errors
+
+    Ok(scan_result)
 }
 
 /// Get scanner API version
@@ -490,4 +588,18 @@ pub async fn llm_worker_shutdown() -> Result<(), String> {
     let worker = get_llm_worker();
     let w = worker.lock().await;
     w.shutdown().await
+}
+
+// ===== Scan Cache Management Commands =====
+
+/// Get information about all scan cache entries.
+#[tauri::command]
+pub fn get_scan_cache_info() -> Result<Vec<crate::cache::CacheEntryInfo>, String> {
+    crate::cache::list_cache_entries()
+}
+
+/// Clear all scan cache files.
+#[tauri::command]
+pub fn clear_scan_cache() -> Result<usize, String> {
+    crate::cache::clear_scan_cache()
 }

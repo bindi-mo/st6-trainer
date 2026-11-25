@@ -581,7 +581,7 @@ fn c_matrix_to_vec_7(arr: &[[c_char; 8]; 7], count: c_int) -> Vec<String> {
 }
 
 // Rust-friendly output types (for Tauri commands / pipeline)
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct MatchMetadataOut {
     pub match_id: String,
     pub character_name_p1: String,
@@ -637,7 +637,7 @@ impl From<MatchMetadata> for MatchMetadataOut {
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct FrameTelemetryOut {
     pub frame_index: i32,
     pub source_frame_index: i32,
@@ -676,7 +676,7 @@ impl From<FrameTelemetry> for FrameTelemetryOut {
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct InputEventOut {
     pub frame_start: i32,
     pub frame_end: i32,
@@ -719,7 +719,7 @@ impl From<InputEvent> for InputEventOut {
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct MoveEventOut {
     pub frame_start: i32,
     pub frame_end: i32,

@@ -106,6 +106,18 @@ interface MatchSummary {
   scan_config_version: string | null;
 }
 
+interface CacheEntryInfo {
+  cache_key: string;
+  video_path: string;
+  video_sha256: string;
+  match_id: string;
+  character_p1: string;
+  character_p2: string;
+  total_frames: number;
+  cached_at: string;
+  file_size_bytes: number;
+}
+
 function App() {
   // ===== Scanner state (existing) =====
   const [selectedVideo, setSelectedVideo] = useState<string | null>(null);
@@ -154,6 +166,11 @@ function App() {
   const [activeMatchId, setActiveMatchId] = useState<string | null>(null);
   const [selectedMove, setSelectedMove] = useState<{ characterId: string; controlType: string; moveName: string } | null>(null);
   const [frameDataModalOpen, setFrameDataModalOpen] = useState(false);
+
+  // ===== Scan cache state =====
+  const [cacheEntries, setCacheEntries] = useState<CacheEntryInfo[]>([]);
+  const [cacheLoading, setCacheLoading] = useState(false);
+  const [cacheError, setCacheError] = useState<string | null>(null);
 
   const { toasts, toast, dismiss } = useToast();
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -245,6 +262,11 @@ function App() {
     }
     loadModels();
     return () => { mounted = false; };
+  }, []);
+
+  // Load scan cache entries on startup
+  useEffect(() => {
+    loadCacheEntries();
   }, []);
 
   // ===== LLM worker management =====
@@ -385,6 +407,37 @@ function App() {
       setCalibError(error as string);
     } finally {
       setCalibSaving(false);
+    }
+  }
+
+  // ===== Scan cache functions =====
+  async function loadCacheEntries() {
+    setCacheLoading(true);
+    setCacheError(null);
+    try {
+      const entries = await invoke<CacheEntryInfo[]>("get_scan_cache_info");
+      setCacheEntries(entries);
+    } catch (error) {
+      console.error("[App] Failed to load cache entries:", error);
+      setCacheError(error as string);
+    } finally {
+      setCacheLoading(false);
+    }
+  }
+
+  async function clearCache() {
+    setCacheLoading(true);
+    setCacheError(null);
+    try {
+      const count = await invoke<number>("clear_scan_cache");
+      setCacheEntries([]);
+      toast(`キャッシュを${count}件削除しました`, "info");
+    } catch (error) {
+      console.error("[App] Failed to clear cache:", error);
+      setCacheError(error as string);
+      toast("キャッシュの削除に失敗しました", "error");
+    } finally {
+      setCacheLoading(false);
     }
   }
 
@@ -611,6 +664,64 @@ function App() {
               {scanError && (
                 <div className="error">Error: {scanError}</div>
               )}
+
+              {/* Scan Cache Management */}
+              <div className="section">
+                <h3>スキャンキャッシュ</h3>
+                <p>
+                  スキャン結果をディスクにキャッシュし、再スキャンなしで
+                  後処理をやり直せます。キャッシュは動画ファイルのハッシュと
+                  スキャナー設定バージョンでキー化されます。
+                </p>
+                <div className="row">
+                  <button
+                    onClick={loadCacheEntries}
+                    disabled={cacheLoading}
+                    className="secondary"
+                  >
+                    {cacheLoading ? "読み込み中..." : "キャッシュ一覧を更新"}
+                  </button>
+                  <button
+                    onClick={clearCache}
+                    disabled={cacheLoading || cacheEntries.length === 0}
+                    className="secondary"
+                  >
+                    キャッシュを全削除
+                  </button>
+                </div>
+                {cacheError && <div className="error">キャッシュエラー: {cacheError}</div>}
+                {cacheEntries.length > 0 && (
+                  <div className="cache-list">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Match ID</th>
+                          <th>P1</th>
+                          <th>P2</th>
+                          <th>フレーム数</th>
+                          <th>キャッシュ日時</th>
+                          <th>サイズ</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {cacheEntries.map((entry) => (
+                          <tr key={entry.cache_key}>
+                            <td>{entry.match_id}</td>
+                            <td>{entry.character_p1}</td>
+                            <td>{entry.character_p2}</td>
+                            <td>{entry.total_frames}</td>
+                            <td>{new Date(entry.cached_at).toLocaleString()}</td>
+                            <td>{(entry.file_size_bytes / 1024).toFixed(1)} KB</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+                {cacheEntries.length === 0 && !cacheLoading && (
+                  <div className="hint">キャッシュエントリはありません。</div>
+                )}
+              </div>
 
               {scanResult && (
                 <>

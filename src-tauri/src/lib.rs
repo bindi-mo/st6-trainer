@@ -1,5 +1,6 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 
+pub mod cache;
 pub mod commands;
 pub mod config;
 pub mod db;
@@ -64,6 +65,9 @@ pub fn run() {
             commands::get_characters,
             commands::get_match_timeline,
             commands::get_match_telemetry,
+            // Scan cache management commands
+            commands::get_scan_cache_info,
+            commands::clear_scan_cache,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

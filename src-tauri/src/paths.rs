@@ -14,6 +14,7 @@ const CONFIG_FILE_NAME: &str = "config.json";
 const MODELS_DIR_NAME: &str = "models";
 const DB_FILE_NAME: &str = "st6_trainer.db";
 const FRAME_DATA_DIR_NAME: &str = "frame_data";
+const SCAN_CACHE_DIR_NAME: &str = "scan_cache";
 
 /// Resolve the application data directory: `$HOME/.st6-trainer/`.
 ///
@@ -103,6 +104,22 @@ pub fn resolve_model_path(model_file_name: &str) -> Result<PathBuf, String> {
     Ok(models_dir.join(model_file_name))
 }
 
+/// Resolve the scan cache directory path: `$HOME/.st6-trainer/scan_cache/`.
+///
+/// Creates the directory if it does not exist.
+pub fn resolve_scan_cache_dir() -> Result<PathBuf, String> {
+    let app_dir = resolve_app_data_dir()?;
+    let scan_cache_dir = app_dir.join(SCAN_CACHE_DIR_NAME);
+    fs::create_dir_all(&scan_cache_dir).map_err(|e| {
+        format!(
+            "Failed to create scan cache directory {}: {}",
+            scan_cache_dir.display(),
+            e
+        )
+    })?;
+    Ok(scan_cache_dir)
+}
+
 /// Check that a path exists and is readable.
 pub fn validate_path(path: &Path, label: &str) -> Result<(), String> {
     if !path.exists() {
@@ -182,5 +199,12 @@ mod tests {
         let dir = resolve_bundled_frame_data_dir().expect("resolve_bundled_frame_data_dir failed");
         assert!(dir.exists(), "bundled frame_data dir should exist: {}", dir.display());
         assert!(dir.ends_with(FRAME_DATA_DIR_NAME));
+    }
+
+    #[test]
+    fn test_resolve_scan_cache_dir_creates_directory() {
+        let dir = resolve_scan_cache_dir().expect("resolve_scan_cache_dir failed");
+        assert!(dir.exists(), "scan cache dir should exist: {}", dir.display());
+        assert!(dir.ends_with(SCAN_CACHE_DIR_NAME));
     }
 }
