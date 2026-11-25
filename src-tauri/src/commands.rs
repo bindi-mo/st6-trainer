@@ -46,74 +46,90 @@ pub async fn scan_video(
         &metadata_out.config_version,
         &metadata_out.template_pack_version,
     )? {
-        // Cache hit - load and return immediately
-        let cached = load_scan_cache(&cache_key)?;
-        
-        // Emit 100% progress for UI
-        let _ = app.emit("scan-progress", serde_json::json!({
-            "frame_index": cached.metadata.total_frames,
-            "total_frames": cached.metadata.total_frames,
-            "progress_percent": 100.0,
-            "elapsed_ms": 0,
-            "estimated_remaining_ms": 0,
-            "estimated_finish_at": null,
-            "from_cache": true,
-        }));
+        // Cache hit - try to load and return immediately
+        match load_scan_cache(&cache_key) {
+            Ok(cached) => {
+                // Emit 100% progress for UI
+                let _ = app.emit("scan-progress", serde_json::json!({
+                    "frame_index": cached.metadata.total_frames,
+                    "total_frames": cached.metadata.total_frames,
+                    "progress_percent": 100.0,
+                    "elapsed_ms": 0,
+                    "estimated_remaining_ms": 0,
+                    "estimated_finish_at": null,
+                    "from_cache": true,
+                }));
 
-        // Run invariant pipeline (writes to SQLite via save_scan_result)
-        let db_path = match &output_dir {
-            Some(dir) => PathBuf::from(dir).join("extraction.db"),
-            None => crate::paths::resolve_extraction_db_path()?,
-        };
+                // Run invariant pipeline (writes to SQLite via save_scan_result)
+                let db_path = match &output_dir {
+                    Some(dir) => PathBuf::from(dir).join("extraction.db"),
+                    None => crate::paths::resolve_extraction_db_path()?,
+                };
 
-        // Build JSONL for pipeline from cached data
-        let telemetry_jsonl: String = cached.telemetry
-            .iter()
-            .map(|t| serde_json::to_string(t).unwrap())
-            .collect::<Vec<_>>()
-            .join("\n");
+                // Build JSONL for pipeline from cached data
+                let telemetry_jsonl: String = cached.telemetry
+                    .iter()
+                    .map(|t| serde_json::to_string(t).unwrap())
+                    .collect::<Vec<_>>()
+                    .join("\n");
 
-        let input_jsonl: String = cached.input_events
-            .iter()
-            .map(|e| serde_json::to_string(e).unwrap())
-            .collect::<Vec<_>>()
-            .join("\n");
+                let input_jsonl: String = cached.input_events
+                    .iter()
+                    .map(|e| serde_json::to_string(e).unwrap())
+                    .collect::<Vec<_>>()
+                    .join("\n");
 
-        let move_jsonl: String = cached.move_events
-            .iter()
-            .map(|e| serde_json::to_string(e).unwrap())
-            .collect::<Vec<_>>()
-            .join("\n");
+                let move_jsonl: String = cached.move_events
+                    .iter()
+                    .map(|e| serde_json::to_string(e).unwrap())
+                    .collect::<Vec<_>>()
+                    .join("\n");
 
-        let match_record = crate::db::MatchSummary {
-            id: cached.metadata.match_id.clone(),
-            played_at: Some(cached.metadata.extracted_at_utc.clone()),
-            my_character: cached.metadata.character_name_p1.clone(),
-            opponent_character: cached.metadata.character_name_p2.clone(),
-            my_control_type: cached.metadata.control_type_p1.clone(),
-            opponent_control_type: cached.metadata.control_type_p2.clone(),
-            total_rounds: 0,
-            result: String::new(),
-            source_video_path: Some(video_path.clone()),
-            scan_config_version: Some(cached.metadata.config_version.clone()),
-        };
+                let match_record = crate::db::MatchSummary {
+                    id: cached.metadata.match_id.clone(),
+                    played_at: Some(cached.metadata.extracted_at_utc.clone()),
+                    my_character: cached.metadata.character_name_p1.clone(),
+                    opponent_character: cached.metadata.character_name_p2.clone(),
+                    my_control_type: cached.metadata.control_type_p1.clone(),
+                    opponent_control_type: cached.metadata.control_type_p2.clone(),
+                    total_rounds: 0,
+                    result: String::new(),
+                    source_video_path: Some(video_path.clone()),
+                    scan_config_version: Some(cached.metadata.config_version.clone()),
+                };
 
-        let invariant_result = run_pipeline(
-            &match_record,
-            &telemetry_jsonl,
-            &input_jsonl,
-            &move_jsonl,
-            &db_path,
-        )
-        .map_err(|e| e.to_string())?;
+                let invariant_result = run_pipeline(
+                    &match_record,
+                    &telemetry_jsonl,
+                    &input_jsonl,
+                    &move_jsonl,
+                    &db_path,
+                )
+                .map_err(|e| e.to_string())?;
 
-        return Ok(ScanResult {
-            metadata: cached.metadata,
-            telemetry: cached.telemetry,
-            input_events: cached.input_events,
-            move_events: cached.move_events,
-            invariant_result,
-        });
+                return Ok(ScanResult {
+                    metadata: cached.metadata,
+                    telemetry: cached.telemetry,
+                    input_events: cached.input_events,
+                    move_events: cached.move_events,
+                    invariant_result,
+                });
+            }
+            Err(_e) => {
+                // Cache is invalid (e.g., old format missing fields) - delete it and fall through to full scan
+                let _ = crate::cache::remove_cache_entry(&cache_key);
+                let _ = app.emit("scan-progress", serde_json::json!({
+                    "frame_index": 0,
+                    "total_frames": metadata_out.total_frames,
+                    "progress_percent": 0.0,
+                    "elapsed_ms": 0,
+                    "estimated_remaining_ms": 0,
+                    "estimated_finish_at": null,
+                    "from_cache": false,
+                    "cache_invalid": true,
+                }));
+            }
+        }
     }
 
     // Cache miss - perform full scan
@@ -236,6 +252,7 @@ pub async fn scan_video(
         move_events: scan_result.move_events.clone(),
         invariant_result: scan_result.invariant_result.clone(),
         cached_at: Utc::now().to_rfc3339(),
+        video_path: video_path.clone(),
         video_sha256: crate::cache::sha256_file(video_path_buf)?,
         config_version: scan_result.metadata.config_version.clone(),
         template_pack_version: scan_result.metadata.template_pack_version.clone(),

@@ -441,6 +441,40 @@ function App() {
     }
   }
 
+  // キャッシュからスキャン結果を読み込み、scanResult に復元する
+  async function loadFromCache(entry: CacheEntryInfo) {
+    if (!entry.video_path) return;
+
+    setSelectedVideo(entry.video_path);
+    setScanResult(null);
+    setScanError(null);
+    setIsScanning(true);
+
+    try {
+      // scan_video コマンドはキャッシュヒットすれば即座に結果を返す
+      const result = await invoke("scan_video", { videoPath: entry.video_path });
+      setScanResult(result as VideoScanResult);
+
+      const meta = (result as VideoScanResult).metadata;
+      if (meta) {
+        setActiveMatchId(meta.match_id);
+        setMyCharacter(meta.character_name_p1);
+        setOpponentCharacter(meta.character_name_p2);
+        setControlType(meta.control_type_p1);
+        setManualTopY(meta.top_y_offset_px);
+        setManualBottomY(meta.bottom_y_offset_px);
+        setManualVerified(meta.manual_verified);
+      }
+
+      toast("キャッシュから読み込みました", "success");
+    } catch (error) {
+      setScanError(error as string);
+      toast("キャッシュの読み込みに失敗しました", "error");
+    } finally {
+      setIsScanning(false);
+    }
+  }
+
   // ===== Phase 14: Match history load =====
   async function loadMatchFromHistory(match: MatchSummary) {
     setActiveMatchId(match.id);
@@ -701,6 +735,7 @@ function App() {
                           <th>フレーム数</th>
                           <th>キャッシュ日時</th>
                           <th>サイズ</th>
+                          <th>操作</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -712,6 +747,15 @@ function App() {
                             <td>{entry.total_frames}</td>
                             <td>{new Date(entry.cached_at).toLocaleString()}</td>
                             <td>{(entry.file_size_bytes / 1024).toFixed(1)} KB</td>
+                            <td>
+                              <button
+                                onClick={() => loadFromCache(entry)}
+                                disabled={isScanning}
+                                className="secondary"
+                              >
+                                読み込み
+                              </button>
+                            </td>
                           </tr>
                         ))}
                       </tbody>
@@ -730,9 +774,9 @@ function App() {
                     <div className="info-grid">
                       <div><strong>Video:</strong> {scanResult.video_path}</div>
                       <div><strong>Resolution:</strong> {scanResult.resolution ? `${scanResult.resolution.width}x${scanResult.resolution.height}` : "—"}</div>
-                      <div><strong>FPS:</strong> {scanResult.fps.toFixed(2)}</div>
+                      <div><strong>FPS:</strong> {scanResult.fps != null ? scanResult.fps.toFixed(2) : "—"}</div>
                       <div><strong>Total Frames:</strong> {scanResult.total_frames}</div>
-                      <div><strong>Duration:</strong> {(scanResult.duration_ms / 1000).toFixed(1)}s</div>
+                      <div><strong>Duration:</strong> {scanResult.duration_ms != null ? (scanResult.duration_ms / 1000).toFixed(1) + "s" : "—"}</div>
                       <div><strong>Frames Processed:</strong> {scanResult.frames.length}</div>
                     </div>
 

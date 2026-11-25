@@ -21,6 +21,7 @@ pub struct CachedScanResult {
     pub invariant_result: InvariantResult,
     /// Cache metadata
     pub cached_at: String, // ISO 8601 timestamp
+    pub video_path: String,
     pub video_sha256: String,
     pub config_version: String,
     pub template_pack_version: String,
@@ -131,7 +132,7 @@ pub fn list_cache_entries() -> Result<Vec<CacheEntryInfo>, String> {
                     let file_size = fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
                     entries.push(CacheEntryInfo {
                         cache_key: path.file_stem().unwrap().to_string_lossy().to_string(),
-                        video_path: cached.metadata.source_resolution.clone(), // placeholder
+                        video_path: cached.video_path.clone(),
                         video_sha256: cached.video_sha256,
                         match_id: cached.metadata.match_id.clone(),
                         character_p1: cached.metadata.character_name_p1.clone(),
@@ -148,6 +149,15 @@ pub fn list_cache_entries() -> Result<Vec<CacheEntryInfo>, String> {
     // Sort by cached_at descending (newest first)
     entries.sort_by(|a, b| b.cached_at.cmp(&a.cached_at));
     Ok(entries)
+}
+
+/// Remove a single cache entry by cache key.
+pub fn remove_cache_entry(cache_key: &str) -> Result<(), String> {
+    let path = cache_file_path(cache_key)?;
+    if path.exists() {
+        fs::remove_file(&path).map_err(|e| format!("Failed to remove cache file: {}", e))?;
+    }
+    Ok(())
 }
 
 /// Clear all scan cache files.
