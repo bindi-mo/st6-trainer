@@ -63,7 +63,7 @@ pub async fn scan_video(
         // Run invariant pipeline (writes to SQLite via save_scan_result)
         let db_path = match &output_dir {
             Some(dir) => PathBuf::from(dir).join("extraction.db"),
-            None => PathBuf::from("extraction.db"),
+            None => crate::paths::resolve_extraction_db_path()?,
         };
 
         // Build JSONL for pipeline from cached data
@@ -208,7 +208,7 @@ pub async fn scan_video(
     // Run invariant pipeline (writes to SQLite via save_scan_result)
     let db_path = match &output_dir {
         Some(dir) => PathBuf::from(dir).join("extraction.db"),
-        None => PathBuf::from("extraction.db"),
+        None => crate::paths::resolve_extraction_db_path()?,
     };
 
     let invariant_result = run_pipeline(

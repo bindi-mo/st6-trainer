@@ -13,6 +13,7 @@ const APP_DIR_NAME: &str = ".st6-trainer";
 const CONFIG_FILE_NAME: &str = "config.json";
 const MODELS_DIR_NAME: &str = "models";
 const DB_FILE_NAME: &str = "st6_trainer.db";
+const EXTRACTION_DB_FILE_NAME: &str = "extraction.db";
 const FRAME_DATA_DIR_NAME: &str = "frame_data";
 const SCAN_CACHE_DIR_NAME: &str = "scan_cache";
 
@@ -96,6 +97,12 @@ pub fn resolve_bundled_frame_data_dir() -> Result<PathBuf, String> {
 pub fn resolve_db_path() -> Result<PathBuf, String> {
     let app_dir = resolve_app_data_dir()?;
     Ok(app_dir.join(DB_FILE_NAME))
+}
+
+/// Resolve the extraction database path: `$HOME/.st6-trainer/extraction.db`.
+pub fn resolve_extraction_db_path() -> Result<PathBuf, String> {
+    let app_dir = resolve_app_data_dir()?;
+    Ok(app_dir.join(EXTRACTION_DB_FILE_NAME))
 }
 
 /// Resolve a model file path within the models directory.
@@ -206,5 +213,12 @@ mod tests {
         let dir = resolve_scan_cache_dir().expect("resolve_scan_cache_dir failed");
         assert!(dir.exists(), "scan cache dir should exist: {}", dir.display());
         assert!(dir.ends_with(SCAN_CACHE_DIR_NAME));
+    }
+
+    #[test]
+    fn test_resolve_extraction_db_path() {
+        let path = resolve_extraction_db_path().expect("resolve_extraction_db_path failed");
+        assert_eq!(path.file_name().unwrap(), EXTRACTION_DB_FILE_NAME);
+        assert!(path.parent().unwrap().ends_with(APP_DIR_NAME));
     }
 }
