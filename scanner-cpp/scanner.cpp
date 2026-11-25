@@ -718,6 +718,14 @@ extern "C"
             }
             auto *impl = static_cast<ScannerImpl *>(handle);
 
+            // メタデータは一度だけ解析すれば十分（キャラクター名、コントロールタイプ、
+            // X/Yオフセットは動画全体を通じて不変）。2回目以降はキャッシュを返す。
+            if (impl->metadata_emitted)
+            {
+                memcpy(out, &impl->metadata, sizeof(MatchMetadata));
+                return 1;
+            }
+
             // Perform calibration if not done yet
             if (!impl->calibration_done)
             {
@@ -846,6 +854,8 @@ extern "C"
             snprintf(out->template_pack_version, sizeof(out->template_pack_version), "%s", impl->config.template_pack_version.c_str());
             snprintf(out->extractor_version, sizeof(out->extractor_version), "%s", impl->config.extractor_version.c_str());
 
+            // メタデータをキャッシュ（2回目以降の呼び出しで再解析をスキップ）
+            memcpy(&impl->metadata, out, sizeof(MatchMetadata));
             impl->metadata_emitted = true;
             cout << "[Scanner] Metadata emitted: match_id=" << out->match_id
                  << " top_y=" << out->top_y_offset_px

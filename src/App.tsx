@@ -14,13 +14,13 @@ import { TimelineNav } from "./components/TimelineNav";
 import { useToast } from "./hooks/useToast";
 
 interface VideoScanResult {
-  video_path: string;
-  resolution: { width: number; height: number };
-  fps: number;
-  total_frames: number;
-  duration_ms: number;
-  frames: FrameData[];
-  hud_layout: HudLayout;
+  video_path?: string;
+  resolution?: { width: number; height: number };
+  fps?: number;
+  total_frames?: number;
+  duration_ms?: number;
+  frames?: FrameData[];
+  hud_layout?: HudLayout;
   metadata: ScanMetadata;
 }
 
@@ -775,9 +775,9 @@ function App() {
                       <div><strong>Video:</strong> {scanResult.video_path}</div>
                       <div><strong>Resolution:</strong> {scanResult.resolution ? `${scanResult.resolution.width}x${scanResult.resolution.height}` : "—"}</div>
                       <div><strong>FPS:</strong> {scanResult.fps != null ? scanResult.fps.toFixed(2) : "—"}</div>
-                      <div><strong>Total Frames:</strong> {scanResult.total_frames}</div>
+                      <div><strong>Total Frames:</strong> {scanResult.total_frames ?? "—"}</div>
                       <div><strong>Duration:</strong> {scanResult.duration_ms != null ? (scanResult.duration_ms / 1000).toFixed(1) + "s" : "—"}</div>
-                      <div><strong>Frames Processed:</strong> {scanResult.frames.length}</div>
+                      <div><strong>Frames Processed:</strong> {scanResult.frames ? scanResult.frames.length : "—"}</div>
                     </div>
 
                     <h4>Metadata</h4>
@@ -849,7 +849,7 @@ function App() {
 
                     <h4>Frame Data (first 10)</h4>
                     <div className="frame-list">
-                      {scanResult.frames.slice(0, 10).map((frame, idx) => (
+                      {(scanResult.frames ? scanResult.frames.slice(0, 10) : []).map((frame, idx) => (
                         <div key={idx} className="frame-item">
                           <strong>Frame {frame.frame_index}</strong> ({frame.timestamp_ms.toFixed(1)}ms)
                           <br />
@@ -867,9 +867,9 @@ function App() {
                           )}
                         </div>
                       ))}
-                      {scanResult.frames.length > 10 && (
+                      {scanResult.frames && scanResult.frames.length > 10 && (
                         <div className="more-frames">
-                          ... and {scanResult.frames.length - 10} more frames
+                          ... and {scanResult.frames!.length - 10} more frames
                         </div>
                       )}
                     </div>

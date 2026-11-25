@@ -219,7 +219,8 @@ namespace st6
 
         // 操作系バッジは画面上部付近に配置されていると仮定
         // 実際の位置はキャリブレーション結果に依存するが、ここでは簡易的に上部領域を検索
-        Mat roi = frame.rowRange(0, frame.rows / 4);
+        // 上部 1/4 から 1/3 に拡大してバッジを見逃さないようにする
+        Mat roi = frame.rowRange(0, frame.rows / 3);
 
         // §5.3: classic.png / modern.png は操作系分類器テンプレート（ボタングリフではない）
         // これらを明示的にマッチングして操作系を判定
@@ -278,6 +279,27 @@ namespace st6
         // §5.3: どちらも閾値未満の場合は control_type は null（空文字）
         if (classic_conf < threshold && modern_conf < threshold)
         {
+            // フォールバック: 入力ボタングリフから操作系を推定
+            // classic: LP/MP/HP/LK/MK/HK, modern: L/M/H/SP/AUTO/DP
+            double fallback_threshold = threshold * 0.75;
+            auto classic_btn_matches = match_templates(roi, "btn_classic", fallback_threshold, 6);
+            auto modern_btn_matches = match_templates(roi, "btn_modern", fallback_threshold, 6);
+
+            if (!modern_btn_matches.empty() && classic_btn_matches.empty())
+            {
+                result.control_type = "modern";
+                result.confidence = modern_btn_matches[0].confidence;
+                result.resolved = true;
+                return result;
+            }
+            if (!classic_btn_matches.empty() && modern_btn_matches.empty())
+            {
+                result.control_type = "classic";
+                result.confidence = classic_btn_matches[0].confidence;
+                result.resolved = true;
+                return result;
+            }
+
             result.control_type = "";
             result.confidence = 0.0;
             result.resolved = false;
