@@ -432,7 +432,7 @@ struct ScannerImpl
                     // Debug: print result matrix stats
                     double result_min, result_max;
                     cv::minMaxLoc(result, &result_min, &result_max);
-                    cout << "[Scanner] match_round_logo: template=" << tmpl.name << " conf=" << max_val 
+                    cout << "[Scanner] match_round_logo: template=" << tmpl.name << " conf=" << max_val
                          << " result_range=[" << result_min << "," << result_max << "]"
                          << " tmpl_size=" << gray_tmpl.cols << "x" << gray_tmpl.rows << endl;
 
@@ -610,11 +610,20 @@ struct ScannerImpl
                 }
 
                             // ラウンドロゴを検出（ユーザー指定位置付近: x=578, y=461）
-                            // テンプレートサイズを考慮してROIを設定
+                                                        // テンプレート画像から実際のサイズを取得
                             int logo_x = 578;
                             int logo_y = 461;
-                            int logo_w = 507; // round.png width
-                            int logo_h = 183; // round.png height
+                            int logo_w = 500; // デフォルト値
+                            int logo_h = 175; // デフォルト値
+                                                        for (const auto &rtmpl : this->round_logo_templates)
+                                                        {
+                                                            if (rtmpl.name == "round")
+                                                            {
+                                                                logo_w = static_cast<int>(rtmpl.template_img.cols);
+                                                                logo_h = static_cast<int>(rtmpl.template_img.rows);
+                                                                break;
+                                                            }
+                                                        }
 
                             int logo_x_start = std::max(0, logo_x - 50);
                             int logo_y_start = std::max(0, logo_y - 50);
@@ -1215,7 +1224,7 @@ extern "C"
                 cout << "[Scanner] Normalization failed: " << g_last_error << endl;
                 return -1;
             }
-            
+
                         // Debug: check normalized frame
                         if (impl->current_frame < 5 || impl->current_frame % 100 == 0)
                         {
@@ -1225,8 +1234,8 @@ extern "C"
                             else
                                 norm_gray = norm_result.normalized_frame.clone();
                             cv::Scalar norm_mean = cv::mean(norm_gray);
-                            cout << "[Scanner] Normalized frame " << impl->current_frame 
-                                 << " mean=" << norm_mean[0] 
+                            cout << "[Scanner] Normalized frame " << impl->current_frame
+                                 << " mean=" << norm_mean[0]
                                  << " size=" << norm_result.normalized_frame.cols << "x" << norm_result.normalized_frame.rows
                                  << " content_offset=(" << norm_result.content_x_offset << "," << norm_result.content_y_offset << ")"
                                  << " content_size=" << norm_result.content_width << "x" << norm_result.content_height << endl;
@@ -1329,17 +1338,27 @@ extern "C"
                 bool hp_reset_detected = hp_reset_p1 || hp_reset_p2;
 
                 // ラウンドロゴ検出: ユーザー指定位置 (x=580, y=462) 付近で round.png / final_round.png を検出
-                                // round.png は 500x175 サイズ。キャリブレーション時と同様に元のフレームで検索（正規化後の座標ズレを避けるため）
+                                                // テンプレート画像から実際のサイズを取得（正規化後の座標ズレを避けるため元のフレームで検索）
                                 const int round_roi_x = 580;
                                 const int round_roi_y = 462;
-                                const int round_roi_w = 500;
-                                const int round_roi_h = 175;
+                                                int round_roi_w = 500;  // デフォルト値
+                                                int round_roi_h = 175;  // デフォルト値
+                                                // 読み込まれたテンプレートから実際のサイズを取得
+                                                                for (const auto &rtmpl : impl->round_logo_templates)
+                                                {
+                                                    if (rtmpl.name == "round")
+                                                    {
+                                                                        round_roi_w = static_cast<int>(rtmpl.template_img.cols);
+                                                                        round_roi_h = static_cast<int>(rtmpl.template_img.rows);
+                                                        break;
+                                                    }
+                                                }
                                 const int search_margin = 50; // ±50ピクセルのマージンで位置ズレを吸収
                                 int round_x_start = std::max(0, round_roi_x - search_margin);
                                 int round_y_start = std::max(0, round_roi_y - search_margin);
                                 int round_x_end = std::min(frame.cols, round_roi_x + round_roi_w + search_margin);
                                 int round_y_end = std::min(frame.rows, round_roi_y + round_roi_h + search_margin);
-                
+
                                 // Debug: check frame at round logo position
                                 if (impl->current_frame < 5 || impl->current_frame % 100 == 0)
                                 {
@@ -1354,13 +1373,14 @@ extern "C"
                                         cv::Scalar debug_mean = cv::mean(debug_gray);
                                         double debug_min, debug_max;
                                         cv::minMaxLoc(debug_gray, &debug_min, &debug_max);
-                                        cout << "[Scanner] Frame " << impl->current_frame 
-                                             << " round_roi mean=" << debug_mean[0] 
+                                        cout << "[Scanner] Frame " << impl->current_frame
+                                             << " round_roi mean=" << debug_mean[0]
                                              << " min=" << debug_min << " max=" << debug_max
-                                             << " roi=[" << round_x_start << "," << round_x_end << "]x[" << round_y_start << "," << round_y_end << "]" << endl;
+                                                             << " roi=[" << round_x_start << "," << round_x_end << "]x[" << round_y_start << "," << round_y_end << "]"
+                                                             << " template_size=" << round_roi_w << "x" << round_roi_h << endl;
                                     }
                                 }
-                
+
                                 string round_logo = impl->match_round_logo(frame,
                                                                            round_x_start,
                                                                            round_x_end,
@@ -1900,17 +1920,27 @@ extern "C"
                 bool hp_reset_detected = hp_reset_p1 || hp_reset_p2;
 
                 // ラウンドロゴ検出: ユーザー指定位置 (x=580, y=462) 付近で round.png / final_round.png を検出
-                                // round.png は 500x175 サイズ。キャリブレーション時と同様に元のフレームで検索（正規化後の座標ズレを避けるため）
+                                                // テンプレート画像から実際のサイズを取得（正規化後の座標ズレを避けるため元のフレームで検索）
                                 const int round_roi_x = 580;
                                 const int round_roi_y = 462;
-                                const int round_roi_w = 500;
-                                const int round_roi_h = 175;
+                                                int round_roi_w = 500;  // デフォルト値
+                                                int round_roi_h = 175;  // デフォルト値
+                                                // 読み込まれたテンプレートから実際のサイズを取得
+                                                                for (const auto &rtmpl : impl->round_logo_templates)
+                                                {
+                                                    if (rtmpl.name == "round")
+                                                    {
+                                                                        round_roi_w = static_cast<int>(rtmpl.template_img.cols);
+                                                                        round_roi_h = static_cast<int>(rtmpl.template_img.rows);
+                                                        break;
+                                                    }
+                                                }
                                 const int search_margin = 50; // ±50ピクセルのマージンで位置ズレを吸収
                                 int round_x_start = std::max(0, round_roi_x - search_margin);
                                 int round_y_start = std::max(0, round_roi_y - search_margin);
                                 int round_x_end = std::min(frame.cols, round_roi_x + round_roi_w + search_margin);
                                 int round_y_end = std::min(frame.rows, round_roi_y + round_roi_h + search_margin);
-                
+
                                 // Debug: check frame at round logo position
                                 if (impl->current_frame < 5 || impl->current_frame % 100 == 0)
                                 {
@@ -1925,13 +1955,14 @@ extern "C"
                                         cv::Scalar debug_mean = cv::mean(debug_gray);
                                         double debug_min, debug_max;
                                         cv::minMaxLoc(debug_gray, &debug_min, &debug_max);
-                                        cout << "[Scanner] Frame " << impl->current_frame 
-                                             << " round_roi mean=" << debug_mean[0] 
+                                        cout << "[Scanner] Frame " << impl->current_frame
+                                             << " round_roi mean=" << debug_mean[0]
                                              << " min=" << debug_min << " max=" << debug_max
-                                             << " roi=[" << round_x_start << "," << round_x_end << "]x[" << round_y_start << "," << round_y_end << "]" << endl;
+                                                             << " roi=[" << round_x_start << "," << round_x_end << "]x[" << round_y_start << "," << round_y_end << "]"
+                                                             << " template_size=" << round_roi_w << "x" << round_roi_h << endl;
                                     }
                                 }
-                
+
                                 string round_logo = impl->match_round_logo(frame,
                                                                            round_x_start,
                                                                            round_x_end,
