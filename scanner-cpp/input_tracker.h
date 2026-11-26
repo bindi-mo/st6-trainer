@@ -34,6 +34,7 @@ namespace st6
         std::string control_type; // "classic" / "modern" / ""
         double confidence;        // 判定信頼度
         bool resolved;            // 判定完了フラグ
+            cv::Point location;       // アイコン検出位置（ROI内座標）
     };
 
     // 入力イベントセグメント（連続する同一入力をまとめたもの）
@@ -70,7 +71,8 @@ namespace st6
         void init_templates();
 
         // 操作系（classic/modern）を判定（1回のみ実行）
-        ControlTypeResult resolve_control_type(const cv::Mat &frame, double threshold);
+                // player: "P1" または "P2" - プレイヤーごとに画面左右の領域を検索
+                ControlTypeResult resolve_control_type(const cv::Mat &frame, double threshold, const std::string &player);
 
         // 操作系を設定（resolve_control_type の結果を保存）
         void set_control_type(const std::string &player, const std::string &control_type);
@@ -116,7 +118,7 @@ namespace st6
         int read_counter(const cv::Mat &roi);
 
         // 操作系バッジを検出
-        ControlTypeResult detect_control_badge(const cv::Mat &frame, double threshold);
+                ControlTypeResult detect_control_badge(const cv::Mat &frame, double threshold, const std::string &player);
 
         // 状態マシン用
         InputSegment current_segment_;

@@ -210,7 +210,7 @@ namespace st6
         return -1;
     }
 
-    ControlTypeResult InputTracker::detect_control_badge(const Mat &frame, double threshold)
+    ControlTypeResult InputTracker::detect_control_badge(const Mat &frame, double threshold, const std::string &player)
     {
         ControlTypeResult result;
         result.control_type = "";
@@ -218,14 +218,31 @@ namespace st6
         result.resolved = false;
 
         // 操作系バッジは画面上部付近に配置されていると仮定
-        // 実際の位置はキャリブレーション結果に依存するが、ここでは簡易的に上部領域を検索
-        // 上部 1/4 から 1/3 に拡大してバッジを見逃さないようにする
-        Mat roi = frame.rowRange(0, frame.rows / 3);
+            // P1は画面左側、P2は画面右側の領域を検索
+            // 上部 1/3 の領域で、左右それぞれ半分を検索
+            int y_end = frame.rows / 3;
+            int x_mid = frame.cols / 2;
+        
+            Mat roi;
+            if (player == "P1") {
+                // P1: 左半分
+                roi = frame.rowRange(0, y_end).colRange(0, x_mid);
+            } else if (player == "P2") {
+                // P2: 右半分
+                roi = frame.rowRange(0, y_end).colRange(x_mid, frame.cols);
+            } else {
+                // フォールバック: 全体
+                roi = frame.rowRange(0, y_end);
+            }
+
+            cout << "[InputTracker] detect_control_badge for " << player 
+                 << ": roi=" << roi.cols << "x" << roi.rows 
+                 << " at (" << (player == "P1" ? 0 : x_mid) << ",0)" << endl;
 
         // §5.3: classic.png / modern.png は操作系分類器テンプレート（ボタングリフではない）
         // これらを明示的にマッチングして操作系を判定
-        Mat classic_tmpl = load_template("btn_classic", "classic");
-        Mat modern_tmpl = load_template("btn_modern", "modern");
+                Mat classic_tmpl = this->load_template("btn_classic", "classic");
+                Mat modern_tmpl = this->load_template("btn_modern", "modern");
 
         double classic_conf = 0.0;
         double modern_conf = 0.0;
@@ -250,6 +267,8 @@ namespace st6
                 Point min_loc, max_loc;
                 minMaxLoc(result_mat, &min_val, &max_val, &min_loc, &max_loc);
                 classic_conf = max_val;
+                        if (classic_conf >= threshold)
+                            result.location = max_loc;
             }
         }
 
@@ -273,6 +292,8 @@ namespace st6
                 Point min_loc, max_loc;
                 minMaxLoc(result_mat, &min_val, &max_val, &min_loc, &max_loc);
                 modern_conf = max_val;
+                        if (modern_conf >= threshold)
+                            result.location = max_loc;
             }
         }
 
@@ -282,13 +303,14 @@ namespace st6
             // フォールバック: 入力ボタングリフから操作系を推定
             // classic: LP/MP/HP/LK/MK/HK, modern: L/M/H/SP/AUTO/DP
             double fallback_threshold = threshold * 0.75;
-            auto classic_btn_matches = match_templates(roi, "btn_classic", fallback_threshold, 6);
-            auto modern_btn_matches = match_templates(roi, "btn_modern", fallback_threshold, 6);
+                    auto classic_btn_matches = this->match_templates(roi, "btn_classic", fallback_threshold, 6);
+                    auto modern_btn_matches = this->match_templates(roi, "btn_modern", fallback_threshold, 6);
 
             if (!modern_btn_matches.empty() && classic_btn_matches.empty())
             {
                 result.control_type = "modern";
                 result.confidence = modern_btn_matches[0].confidence;
+                        result.location = modern_btn_matches[0].location;
                 result.resolved = true;
                 return result;
             }
@@ -296,6 +318,7 @@ namespace st6
             {
                 result.control_type = "classic";
                 result.confidence = classic_btn_matches[0].confidence;
+                        result.location = classic_btn_matches[0].location;
                 result.resolved = true;
                 return result;
             }
@@ -307,6 +330,7 @@ namespace st6
         }
 
         // 両方検出された場合は信頼度の高い方を採用
+                // 位置情報も保存（キャラクター名ROI計算用）
         if (classic_conf >= modern_conf)
         {
             result.control_type = "classic";
@@ -322,9 +346,9 @@ namespace st6
         return result;
     }
 
-    ControlTypeResult InputTracker::resolve_control_type(const Mat &frame, double threshold)
+    ControlTypeResult InputTracker::resolve_control_type(const Mat &frame, double threshold, const std::string &player)
     {
-        return detect_control_badge(frame, threshold);
+            return detect_control_badge(frame, threshold, player);
     }
 
     void InputTracker::set_control_type(const std::string &player, const std::string &control_type)

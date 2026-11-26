@@ -46,10 +46,10 @@ struct ScannerConfig
     double threshold_attack_property = 0.92;
 
     // Round detection thresholds
-    double hp_reset_low_threshold = 0.3;   // HP がこの値未満なら「ラウンド終了」とみなす（補完用）
-    double hp_reset_high_threshold = 0.7;  // HP がこの値を超えたら「ラウンド開始」とみなす（補完用）
-    int round_timer_gap_frames = 180;      // ラウンド間の最小フレーム間隔（3秒 @60fps、タイマーベース補完用）
-    int round_duration_frames = 5940;      // 1ラウンドの想定フレーム数（99秒 @60fps）
+    double hp_reset_low_threshold = 0.3;  // HP がこの値未満なら「ラウンド終了」とみなす（補完用）
+    double hp_reset_high_threshold = 0.7; // HP がこの値を超えたら「ラウンド開始」とみなす（補完用）
+    int round_timer_gap_frames = 180;     // ラウンド間の最小フレーム間隔（3秒 @60fps、タイマーベース補完用）
+    int round_duration_frames = 5940;     // 1ラウンドの想定フレーム数（99秒 @60fps）
 
     // Metadata
     string config_version = "cfg-1.0";
@@ -120,7 +120,20 @@ struct ScannerImpl
     double prev_hp_p2;
     int round_index;
     bool round_initialized;
-    int last_reset_frame;   // 前回のラウンドリセット検出フレーム（タイマーベース補完用）
+    int last_reset_frame; // 前回のラウンドリセット検出フレーム（タイマーベース補完用）
+
+    // Character name detection state
+    bool character_names_detected;
+    string detected_char_p1;
+    string detected_char_p2;
+
+    // Control type icon locations (for character name ROI calculation)
+    cv::Point ctrl_icon_loc_p1;
+    cv::Point ctrl_icon_loc_p2;
+
+    // Early termination after round start (user request: stop after a few frames)
+    bool stop_analysis;
+    int frames_after_round_start;
 
     ScannerImpl() : fps(0), total_frames(0), current_frame(0),
                     calibration_done(false), top_y_offset_px(0), bottom_y_offset_px(0),
@@ -130,10 +143,16 @@ struct ScannerImpl
                     gauge_detector_initialized(false),
                     frame_meter_detector_initialized(false),
                     char_templates_loaded(false),
+                        round_logo_templates_loaded(false),
                     prev_hp_p1(1.0), prev_hp_p2(1.0),
                     round_index(1),
                     round_initialized(false),
-                    last_reset_frame(0) {}
+                    last_reset_frame(0),
+                    character_names_detected(false),
+                    detected_char_p1(""),
+                    detected_char_p2(""),
+                    stop_analysis(false),
+                    frames_after_round_start(0) {}
 
     ~ScannerImpl()
     {
@@ -299,53 +318,88 @@ struct ScannerImpl
     void load_round_logo_templates()
     {
         if (round_logo_templates_loaded)
+            {
+                cout << "[Scanner] load_round_logo_templates: already loaded, returning (templates_count=" << round_logo_templates.size() << ")" << endl;
             return;
+            }
 
         namespace fs = std::filesystem;
         fs::path logos_dir = fs::path(template_pack_path) / "round_logos";
+            cout << "[Scanner] load_round_logo_templates: Looking for round logos at: " << logos_dir << endl;
+            cout << "[Scanner] load_round_logo_templates: template_pack_path: " << template_pack_path << endl;
         if (!fs::exists(logos_dir))
         {
-            cout << "[Scanner] Round logos directory not found: " << logos_dir << endl;
+                cout << "[Scanner] load_round_logo_templates: Round logos directory not found: " << logos_dir << endl;
             round_logo_templates_loaded = true;
             return;
         }
+            cout << "[Scanner] load_round_logo_templates: Round logos directory found!" << endl;
+            cout << "[Scanner] load_round_logo_templates: Directory contents:" << endl;
+            for (const auto &entry : fs::directory_iterator(logos_dir))
+            {
+                cout << "[Scanner] load_round_logo_templates:   " << entry.path().filename().string() << endl;
+            }
 
         for (const auto &entry : fs::directory_iterator(logos_dir))
         {
             if (entry.path().extension() == ".png")
             {
-                Mat tmpl = imread(entry.path().string(), IMREAD_COLOR);
+                string full_path = entry.path().string();
+                string stem = entry.path().stem().string();
+                cout << "[Scanner] Found round logo file: " << full_path << " stem: '" << stem << "'" << endl;
+                Mat tmpl = imread(full_path, IMREAD_COLOR);
                 if (!tmpl.empty())
                 {
                     CharNameTemplate ctmpl;
-                    ctmpl.name = entry.path().stem().string();
+                    ctmpl.name = stem;
                     ctmpl.template_img = tmpl;
+                    cout << "[Scanner] Before push: ctmpl.name = '" << ctmpl.name << "'" << endl;
                     round_logo_templates.push_back(move(ctmpl));
-                    cout << "[Scanner] Loaded round logo template: " << ctmpl.name << endl;
+                    cout << "[Scanner] Loaded round logo template: '" << stem << "'" << endl;
+                }
+                else
+                {
+                    cout << "[Scanner] Failed to load image: " << full_path << endl;
                 }
             }
         }
 
         round_logo_templates_loaded = true;
-        cout << "[Scanner] Loaded " << round_logo_templates.size() << " round logo templates" << endl;
+                    cout << "[Scanner] load_round_logo_templates: Loaded " << round_logo_templates.size() << " round logo templates" << endl;
+                    for (const auto &tmpl : round_logo_templates) {
+                        cout << "[Scanner] load_round_logo_templates:   template '" << tmpl.name << "' size=" << tmpl.template_img.cols << "x" << tmpl.template_img.rows << endl;
+                    }
     }
 
     // Match round logo against templates (Phase 5)
     // Returns matched logo name (e.g. "round_1", "round_2", "final_round") or empty string
     string match_round_logo(const Mat &frame, int x_start, int x_end, int y_start, int y_end)
     {
+                static int call_count = 0;
+                call_count++;
+                cout << "[Scanner] match_round_logo #" << call_count << ": called with x=[" << x_start << "," << x_end << "] y=[" << y_start << "," << y_end << "] frame_size=" << frame.cols << "x" << frame.rows << " templates_count=" << round_logo_templates.size() << endl;
         if (round_logo_templates.empty())
+                {
+                    cout << "[Scanner] match_round_logo: no templates loaded!" << endl;
             return "";
+                }
 
         Mat roi = frame.rowRange(y_start, y_end).colRange(x_start, x_end);
         if (roi.empty())
+                {
+                    cout << "[Scanner] match_round_logo: ROI is empty!" << endl;
             return "";
+                }
 
         Mat gray_roi;
         if (roi.channels() == 3)
             cvtColor(roi, gray_roi, COLOR_BGR2GRAY);
         else
             gray_roi = roi.clone();
+
+                // Debug: print ROI mean pixel value
+                Scalar roi_mean = mean(gray_roi);
+                cout << "[Scanner] match_round_logo: ROI mean pixel value = " << roi_mean[0] << endl;
 
         double best_conf = 0.0;
         string best_name;
@@ -360,13 +414,27 @@ struct ScannerImpl
 
             // テンプレートが ROI より大きい場合はスキップ
             if (gray_tmpl.cols > gray_roi.cols || gray_tmpl.rows > gray_roi.rows)
+                    {
+                        cout << "[Scanner] match_round_logo: template " << tmpl.name << " too large (" << gray_tmpl.cols << "x" << gray_tmpl.rows << " > " << gray_roi.cols << "x" << gray_roi.rows << ")" << endl;
                 continue;
+                    }
+
+                    // Debug: print template mean pixel value
+                    Scalar tmpl_mean = mean(gray_tmpl);
+                    cout << "[Scanner] match_round_logo: template " << tmpl.name << " mean pixel value = " << tmpl_mean[0] << endl;
 
             Mat result;
             matchTemplate(gray_roi, gray_tmpl, result, TM_CCOEFF_NORMED);
             double min_val, max_val;
             Point min_loc, max_loc;
             minMaxLoc(result, &min_val, &max_val, &min_loc, &max_loc);
+
+                    // Debug: print result matrix stats
+                    double result_min, result_max;
+                    cv::minMaxLoc(result, &result_min, &result_max);
+                    cout << "[Scanner] match_round_logo: template=" << tmpl.name << " conf=" << max_val 
+                         << " result_range=[" << result_min << "," << result_max << "]"
+                         << " tmpl_size=" << gray_tmpl.cols << "x" << gray_tmpl.rows << endl;
 
             if (max_val > best_conf)
             {
@@ -375,8 +443,9 @@ struct ScannerImpl
             }
         }
 
-        // 信頼度閾値（0.80 以上でマッチとみなす）
-        if (best_conf > 0.80)
+        // 信頼度閾値（0.85 以上でマッチとみなす）
+                cout << "[Scanner] match_round_logo: best_conf=" << best_conf << " best_name=" << best_name << " roi_size=" << gray_roi.cols << "x" << gray_roi.rows << endl;
+                if (best_conf > 0.85)
             return best_name;
 
         return "";
@@ -423,7 +492,9 @@ struct ScannerImpl
             Point min_loc, max_loc;
             minMaxLoc(result, &min_val, &max_val, &min_loc, &max_loc);
 
-            if (max_val > best_conf && max_val > 0.80)
+            cout << "[Scanner] match_character_name: template=" << ctmpl.name << " conf=" << max_val << endl;
+
+            if (max_val > best_conf && max_val > 0.10)
             {
                 best_conf = max_val;
                 best_name = ctmpl.name;
@@ -517,70 +588,107 @@ struct ScannerImpl
 
         if (!has_first_frame)
         {
-            // Skip to actual gameplay (frame 918+ based on user input)
-            // This ensures HUD is fully visible and stable
+            // ラウンド開始フレームを動的に検出（round.png または final_round.png でテンプレートマッチング）
+            // ユーザー指定位置: round.png x=578, y=461 / ko.png x=627, y=351
+            // 1000フレーム以内に検出できなければエラー
             Mat frame;
-            int target_frame = 918; // Start of actual gameplay
-            int max_attempts = 300; // Try up to 300 frames after target
+            int max_attempts = 1000;
 
-            cap.set(CAP_PROP_POS_FRAMES, target_frame);
+            cap.set(CAP_PROP_POS_FRAMES, 0);
 
-            bool found_content = false;
+            // ラウンドロゴテンプレートを読み込み
+            load_round_logo_templates();
+
+            bool found_round_start = false;
+            int round_start_frame = -1;
+
             for (int i = 0; i < max_attempts; i++)
             {
                 if (!cap.read(frame) || frame.empty())
                 {
-                    g_last_error = "Failed to read frame for calibration";
-                    return false;
-                }
-
-                // Check if frame has content (not black)
-                cv::Mat gray;
-                if (frame.channels() == 3)
-                {
-                    cv::cvtColor(frame, gray, cv::COLOR_BGR2GRAY);
-                }
-                else
-                {
-                    gray = frame.clone();
-                }
-
-                // Check if upper HUD region (Y=0-270) has content
-                cv::Mat upper_region = gray.rowRange(0, std::min(270, gray.rows));
-                double upper_min, upper_max;
-                cv::minMaxLoc(upper_region, &upper_min, &upper_max);
-
-                // Check if lower HUD region (Y=756-1080) has content
-                cv::Mat lower_region = gray.rowRange(std::max(0, gray.rows - 324), gray.rows);
-                double lower_min, lower_max;
-                cv::minMaxLoc(lower_region, &lower_min, &lower_max);
-
-                if (upper_max > 100.0 && lower_max > 100.0)
-                { // Found a frame with full HUD
-                    cout << "[Scanner] Found gameplay frame at index " << (target_frame + i)
-                         << " (upper_max=" << upper_max << ", lower_max=" << lower_max << ")" << endl;
-                    found_content = true;
                     break;
                 }
 
-                if (i < 5 || (i + 1) % 50 == 0)
+                            // ラウンドロゴを検出（ユーザー指定位置付近: x=578, y=461）
+                            // テンプレートサイズを考慮してROIを設定
+                            int logo_x = 578;
+                            int logo_y = 461;
+                            int logo_w = 507; // round.png width
+                            int logo_h = 183; // round.png height
+
+                            int logo_x_start = std::max(0, logo_x - 50);
+                            int logo_y_start = std::max(0, logo_y - 50);
+                            int logo_x_end = std::min(frame.cols, logo_x + logo_w + 50);
+                            int logo_y_end = std::min(frame.rows, logo_y + logo_h + 50);
+
+                            Mat logo_roi = frame.rowRange(logo_y_start, logo_y_end).colRange(logo_x_start, logo_x_end);
+                            if (logo_roi.empty())
+                                continue;
+
+                            Mat gray_roi;
+                            if (logo_roi.channels() == 3)
+                                cvtColor(logo_roi, gray_roi, COLOR_BGR2GRAY);
+                else
+                                gray_roi = logo_roi.clone();
+
+                for (const auto &rtmpl : round_logo_templates)
                 {
-                    cout << "[Scanner] Skipping frame at index " << (target_frame + i)
-                         << " (upper_max=" << upper_max << ", lower_max=" << lower_max << ")" << endl;
+                    if (rtmpl.name != "round" && rtmpl.name != "final_round")
+                        continue;
+
+                    Mat gray_tmpl;
+                    if (rtmpl.template_img.channels() == 3)
+                        cvtColor(rtmpl.template_img, gray_tmpl, COLOR_BGR2GRAY);
+                    else
+                        gray_tmpl = rtmpl.template_img.clone();
+
+                                if (gray_tmpl.cols > gray_roi.cols || gray_tmpl.rows > gray_roi.rows)
+                        continue;
+
+                    Mat result_mat;
+                                matchTemplate(gray_roi, gray_tmpl, result_mat, TM_CCOEFF_NORMED);
+                    double min_val, max_val;
+                    Point min_loc, max_loc;
+                    minMaxLoc(result_mat, &min_val, &max_val, &min_loc, &max_loc);
+
+                    if (max_val > 0.50)
+                    {
+                        round_start_frame = i;
+                        found_round_start = true;
+                        cout << "[Scanner] Round start detected at frame " << i
+                             << " (logo=" << rtmpl.name << ", conf=" << max_val << ")" << endl;
+                        break;
+                    }
+                }
+
+                if (found_round_start)
+                    break;
+
+                if (i < 5 || (i + 1) % 100 == 0)
+                {
+                    cout << "[Scanner] Searching round start at frame " << i << endl;
                 }
             }
 
-            if (!found_content)
+            if (!found_round_start)
             {
-                g_last_error = "Could not find a frame with full HUD content after " + to_string(max_attempts) + " attempts";
+                g_last_error = "Could not detect round start frame after " + to_string(max_attempts) + " attempts";
                 cout << "[Scanner] Error: " << g_last_error << endl;
+                return false;
+            }
+
+            // ラウンド開始フレームを first_frame として保存
+            cap.set(CAP_PROP_POS_FRAMES, round_start_frame);
+            if (!cap.read(frame) || frame.empty())
+            {
+                g_last_error = "Failed to read round start frame";
                 return false;
             }
 
             first_frame = frame.clone();
             has_first_frame = true;
 
-            // Reset to beginning for actual scanning
+            // 実際のスキャンは先頭から開始
             cap.set(CAP_PROP_POS_FRAMES, 0);
             current_frame = 0;
         }
@@ -743,16 +851,155 @@ extern "C"
                      impl->top_y_offset_px, impl->bottom_y_offset_px);
 
             // Character names (Phase 5: detected from names/ templates)
-            // Character name regions: upper HUD, left side for P1, right side for P2
-            int char_name_y_start = static_cast<int>(impl->config.canonical_height * 0.15);
-            int char_name_y_end = static_cast<int>(impl->config.canonical_height * 0.22);
-            int char_name_x_mid = impl->config.canonical_width / 2;
+            // Character name regions: top of screen where character names actually appear
+            // P1: left side, P2: right side
+            // アンカー位置（upper_timer_top_edge.png）からのオフセットで算出
+            // アンカー位置: テンプレートマッチングで動的に特定
+            // Character name offset: P1 x=-896, y=18（左端基準）
+            // Character name end offset: P2 x=993, y=2（右端基準、右寄せ）
+            // P2は右寄せなので、テンプレート幅を引いた左端を計算
 
-            string char_p1 = impl->match_character_name(impl->first_frame, 0, char_name_x_mid, char_name_y_start, char_name_y_end);
-            string char_p2 = impl->match_character_name(impl->first_frame, char_name_x_mid, impl->config.canonical_width, char_name_y_start, char_name_y_end);
+            // アンカーテンプレートをマッチングして位置を特定
+            int anchor_x = 912; // デフォルト値
+            int anchor_y = 46;  // デフォルト値
+
+            // アンカーテンプレートを読み込み
+            Mat anchor_tmpl = imread(impl->template_pack_path + "/anchor/upper_timer_top_edge.png", IMREAD_COLOR);
+            if (!anchor_tmpl.empty())
+            {
+                Mat anchor_gray, frame_gray;
+                cvtColor(anchor_tmpl, anchor_gray, COLOR_BGR2GRAY);
+                cvtColor(impl->first_frame, frame_gray, COLOR_BGR2GRAY);
+
+                if (anchor_gray.cols <= frame_gray.cols && anchor_gray.rows <= frame_gray.rows)
+                {
+                    Mat result_mat;
+                    matchTemplate(frame_gray, anchor_gray, result_mat, TM_CCOEFF_NORMED);
+                    double min_val, max_val;
+                    Point min_loc, max_loc;
+                    minMaxLoc(result_mat, &min_val, &max_val, &min_loc, &max_loc);
+
+                    if (max_val > 0.80)
+                    {
+                        anchor_x = max_loc.x;
+                        anchor_y = max_loc.y;
+                        cout << "[Scanner] Anchor detected at (" << anchor_x << "," << anchor_y << ") conf=" << max_val << endl;
+                    }
+                    else
+                    {
+                        cout << "[Scanner] Anchor not found, using default (" << anchor_x << "," << anchor_y << ") conf=" << max_val << endl;
+                    }
+                }
+            }
+
+            // P1: 左端基準
+            int char_p1_x_start = std::max(0, anchor_x + (-896));
+            int char_p1_x_end = char_p1_x_start + 192; // 192px幅
+            int char_p1_y_start = anchor_y - 18;       // ユーザー指定: y=-18
+            int char_p1_y_end = char_p1_y_start + 20;  // キャラクター名の高さを20px
+
+            // P2: 右端基準（テンプレート幅を引いて左端を計算、各テンプレートごとに計算）
+            // y座標はP1と同じ
+            int char_p2_y_start = char_p1_y_start;
+            int char_p2_y_end = char_p1_y_end;
+
+            string char_p1, char_p2;
+
+            // Use already detected character names if available
+            if (!impl->detected_char_p1.empty() && !impl->detected_char_p2.empty())
+            {
+                char_p1 = impl->detected_char_p1;
+                char_p2 = impl->detected_char_p2;
+                cout << "[Scanner] Using pre-detected character names: P1='" << char_p1 << "' P2='" << char_p2 << "'" << endl;
+            }
+            else
+            {
+                // Detect from first frame
+                // P1: 左端基準、P2: 右端基準（テンプレート幅を引いて左端を計算）
+                cout << "[Scanner] Character name ROI P1: x=[" << char_p1_x_start << "," << char_p1_x_end << "] y=[" << char_p1_y_start << "," << char_p1_y_end << "]" << endl;
+
+                char_p1 = impl->match_character_name(impl->first_frame, char_p1_x_start, char_p1_x_end, char_p1_y_start, char_p1_y_end);
+
+                cout << "[Scanner] Character name P1: '" << char_p1 << "'" << endl;
+
+                // P2: 各テンプレートごとに右端基準でROIを計算
+                // テンプレート幅を減算して左端を導出（固定値ではなく毎回計算）
+                // y座標はP1と同じ（ユーザー指定）、高さはテンプレート画像の実際の高さに合わせる
+                int char_p2_x_start = 0;
+                int char_p2_x_end = 0;
+                string best_p2_name;
+                double best_p2_conf = 0.0;
+
+                for (const auto &ctmpl : impl->char_templates)
+                {
+                    int tmpl_width = ctmpl.template_img.cols;
+                    int tmpl_height = ctmpl.template_img.rows;
+                    int p2_x_start = anchor_x + 994 - tmpl_width;
+                    int p2_x_end = anchor_x + 994;
+                    int p2_y_start = char_p2_y_start;
+                    int p2_y_end = char_p2_y_start + tmpl_height;
+
+                    cout << "[Scanner] Character name ROI P2 (template=" << ctmpl.name << "): x=[" << p2_x_start << "," << p2_x_end << "] y=[" << p2_y_start << "," << p2_y_end << "]" << endl;
+
+                    // そのテンプレート幅・高さに基づいたROI内で、そのテンプレート自身のマッチ度を評価
+                    Mat roi = impl->first_frame.rowRange(p2_y_start, p2_y_end).colRange(p2_x_start, p2_x_end);
+                    if (roi.empty())
+                        continue;
+
+                    Mat gray_roi;
+                    if (roi.channels() == 3)
+                        cvtColor(roi, gray_roi, COLOR_BGR2GRAY);
+                    else
+                        gray_roi = roi.clone();
+
+                    Mat gray_tmpl;
+                    if (ctmpl.template_img.channels() == 3)
+                        cvtColor(ctmpl.template_img, gray_tmpl, COLOR_BGR2GRAY);
+                    else
+                        gray_tmpl = ctmpl.template_img.clone();
+
+                    // テンプレートをROIサイズにリサイズ（アスペクト比維持）
+                    double scale = static_cast<double>(gray_roi.rows) / static_cast<double>(gray_tmpl.rows);
+                    Mat resized_tmpl;
+                    resize(gray_tmpl, resized_tmpl, Size(), scale, scale, INTER_AREA);
+
+                    if (resized_tmpl.cols > gray_roi.cols || resized_tmpl.rows > gray_roi.rows)
+                        continue;
+
+                    Mat result_mat;
+                    matchTemplate(gray_roi, resized_tmpl, result_mat, TM_CCOEFF_NORMED);
+                    double min_val, max_val;
+                    Point min_loc, max_loc;
+                    minMaxLoc(result_mat, &min_val, &max_val, &min_loc, &max_loc);
+
+                    cout << "[Scanner]   self-match template=" << ctmpl.name << " conf=" << max_val << endl;
+
+                    if (max_val > best_p2_conf && max_val > 0.10)
+                    {
+                        best_p2_conf = max_val;
+                        best_p2_name = ctmpl.name;
+                    }
+                }
+                char_p2 = best_p2_name;
+
+                cout << "[Scanner] Character name P2: '" << char_p2 << "'" << endl;
+            }
 
             snprintf(out->character_name_p1, sizeof(out->character_name_p1), "%s", char_p1.c_str());
             snprintf(out->character_name_p2, sizeof(out->character_name_p2), "%s", char_p2.c_str());
+
+            // Store detected character names for early termination
+            impl->detected_char_p1 = char_p1;
+            impl->detected_char_p2 = char_p2;
+            impl->character_names_detected = (!char_p1.empty() && !char_p2.empty());
+
+            // Early termination: stop analysis after character names detected
+            if (impl->character_names_detected)
+            {
+                impl->stop_analysis = true;
+                impl->frames_after_round_start = 0;
+                cout << "[Scanner] Character names detected from first frame. Will stop after 5 more frames." << endl;
+            }
 
             // Control types will be resolved after input tracker is initialized below
             snprintf(out->control_type_p1, sizeof(out->control_type_p1), "");
@@ -795,8 +1042,9 @@ extern "C"
 
             // Resolve control types from classic.png/modern.png classifier templates (Phase 6)
             // Must be after input_tracker is initialized
-            auto ctrl_p1 = impl->input_tracker->resolve_control_type(impl->first_frame, impl->config.threshold_input_glyph);
-            auto ctrl_p2 = impl->input_tracker->resolve_control_type(impl->first_frame, impl->config.threshold_input_glyph);
+            // Pass player parameter to search in player-specific regions
+            auto ctrl_p1 = impl->input_tracker->resolve_control_type(impl->first_frame, impl->config.threshold_input_glyph, "P1");
+            auto ctrl_p2 = impl->input_tracker->resolve_control_type(impl->first_frame, impl->config.threshold_input_glyph, "P2");
             impl->input_tracker->set_control_type("P1", ctrl_p1.control_type);
             impl->input_tracker->set_control_type("P2", ctrl_p2.control_type);
 
@@ -807,6 +1055,10 @@ extern "C"
                  << " (conf=" << ctrl_p1.confidence << ")" << endl;
             cout << "[Scanner] Control type P2: " << ctrl_p2.control_type
                  << " (conf=" << ctrl_p2.confidence << ")" << endl;
+
+            // Save control type icon locations for character name ROI calculation
+            impl->ctrl_icon_loc_p1 = ctrl_p1.location;
+            impl->ctrl_icon_loc_p2 = ctrl_p2.location;
 
             // Initialize gauge detector (Phase 4)
             if (!impl->gauge_detector_initialized)
@@ -963,6 +1215,22 @@ extern "C"
                 cout << "[Scanner] Normalization failed: " << g_last_error << endl;
                 return -1;
             }
+            
+                        // Debug: check normalized frame
+                        if (impl->current_frame < 5 || impl->current_frame % 100 == 0)
+                        {
+                            cv::Mat norm_gray;
+                            if (norm_result.normalized_frame.channels() == 3)
+                                cv::cvtColor(norm_result.normalized_frame, norm_gray, cv::COLOR_BGR2GRAY);
+                            else
+                                norm_gray = norm_result.normalized_frame.clone();
+                            cv::Scalar norm_mean = cv::mean(norm_gray);
+                            cout << "[Scanner] Normalized frame " << impl->current_frame 
+                                 << " mean=" << norm_mean[0] 
+                                 << " size=" << norm_result.normalized_frame.cols << "x" << norm_result.normalized_frame.rows
+                                 << " content_offset=(" << norm_result.content_x_offset << "," << norm_result.content_y_offset << ")"
+                                 << " content_size=" << norm_result.content_width << "x" << norm_result.content_height << endl;
+                        }
 
             // Fill telemetry with real gauge detection (Phase 4)
             memset(out, 0, sizeof(FrameTelemetry));
@@ -984,17 +1252,21 @@ extern "C"
                 FrameGauges gauges = impl->gauge_detector->detect(norm_result.normalized_frame, upper_y_start, upper_y_end, lower_y_start, lower_y_end);
 
                 hp_p1 = gauges.hp_p1.value;
-                out->drive_p1 = gauges.drive_p1.value * 6.0; // Drive ゲージは 0-6 段階
+                out->drive_p1 = gauges.drive_p1.value * 6.0;                         // Drive ゲージは 0-6 段階
                 out->sa_p1 = static_cast<int>(std::round(gauges.sa_p1.value * 3.0)); // SA は 0-3 段階
-                if (out->sa_p1 < 0) out->sa_p1 = 0; // §7.5 項 7: クランプ
-                if (out->sa_p1 > 3) out->sa_p1 = 3;
+                if (out->sa_p1 < 0)
+                    out->sa_p1 = 0; // §7.5 項 7: クランプ
+                if (out->sa_p1 > 3)
+                    out->sa_p1 = 3;
                 out->in_burnout_p1 = gauges.in_burnout_p1 ? 1 : 0;
 
                 hp_p2 = gauges.hp_p2.value;
                 out->drive_p2 = gauges.drive_p2.value * 6.0;
                 out->sa_p2 = static_cast<int>(std::round(gauges.sa_p2.value * 3.0));
-                if (out->sa_p2 < 0) out->sa_p2 = 0; // §7.5 項 7: クランプ
-                if (out->sa_p2 > 3) out->sa_p2 = 3;
+                if (out->sa_p2 < 0)
+                    out->sa_p2 = 0; // §7.5 項 7: クランプ
+                if (out->sa_p2 > 3)
+                    out->sa_p2 = 3;
                 out->in_burnout_p2 = gauges.in_burnout_p2 ? 1 : 0;
 
                 // Quality flags for occluded gauges
@@ -1056,38 +1328,79 @@ extern "C"
                 bool hp_reset_p2 = (impl->prev_hp_p2 < impl->config.hp_reset_low_threshold && hp_p2 > impl->config.hp_reset_high_threshold);
                 bool hp_reset_detected = hp_reset_p1 || hp_reset_p2;
 
-                // ラウンドロゴ検出: 画面中央の "Round ? / Final Round / K.O. / TIME OVER" ロゴ
-                string round_logo = impl->match_round_logo(norm_result.normalized_frame,
-                    static_cast<int>(impl->config.canonical_width * 0.30),
-                    static_cast<int>(impl->config.canonical_width * 0.70),
-                    static_cast<int>(impl->config.canonical_height * 0.35),
-                    static_cast<int>(impl->config.canonical_height * 0.65));
+                // ラウンドロゴ検出: ユーザー指定位置 (x=580, y=462) 付近で round.png / final_round.png を検出
+                                // round.png は 500x175 サイズ。キャリブレーション時と同様に元のフレームで検索（正規化後の座標ズレを避けるため）
+                                const int round_roi_x = 580;
+                                const int round_roi_y = 462;
+                                const int round_roi_w = 500;
+                                const int round_roi_h = 175;
+                                const int search_margin = 50; // ±50ピクセルのマージンで位置ズレを吸収
+                                int round_x_start = std::max(0, round_roi_x - search_margin);
+                                int round_y_start = std::max(0, round_roi_y - search_margin);
+                                int round_x_end = std::min(frame.cols, round_roi_x + round_roi_w + search_margin);
+                                int round_y_end = std::min(frame.rows, round_roi_y + round_roi_h + search_margin);
+                
+                                // Debug: check frame at round logo position
+                                if (impl->current_frame < 5 || impl->current_frame % 100 == 0)
+                                {
+                                    cv::Mat debug_roi = frame.rowRange(round_y_start, round_y_end).colRange(round_x_start, round_x_end);
+                                    if (!debug_roi.empty())
+                                    {
+                                        cv::Mat debug_gray;
+                                        if (debug_roi.channels() == 3)
+                                            cv::cvtColor(debug_roi, debug_gray, cv::COLOR_BGR2GRAY);
+                                        else
+                                            debug_gray = debug_roi.clone();
+                                        cv::Scalar debug_mean = cv::mean(debug_gray);
+                                        double debug_min, debug_max;
+                                        cv::minMaxLoc(debug_gray, &debug_min, &debug_max);
+                                        cout << "[Scanner] Frame " << impl->current_frame 
+                                             << " round_roi mean=" << debug_mean[0] 
+                                             << " min=" << debug_min << " max=" << debug_max
+                                             << " roi=[" << round_x_start << "," << round_x_end << "]x[" << round_y_start << "," << round_y_end << "]" << endl;
+                                    }
+                                }
+                
+                                string round_logo = impl->match_round_logo(frame,
+                                                                           round_x_start,
+                                                                           round_x_end,
+                                                                           round_y_start,
+                                                                           round_y_end);
                 bool round_logo_detected = !round_logo.empty();
+
+                if (round_logo_detected)
+                {
+                    cout << "[Scanner] Round logo detected: '" << round_logo << "' at frame " << impl->current_frame << endl;
+                }
+
+                // 最小間隔チェック（誤検出防止）
+                bool min_interval_passed = (frames_since_reset >= impl->config.round_timer_gap_frames);
 
                 // ラウンド開始ロゴかラウンド終了ロゴかを区別
                 bool is_round_start_logo = (round_logo == "round" || round_logo == "final_round");
                 bool is_round_end_logo = (round_logo == "ko" || round_logo == "time_over");
 
-                // 最小間隔チェック（誤検出防止）
-                bool min_interval_passed = (frames_since_reset >= impl->config.round_timer_gap_frames);
+                cout << "[Scanner] Round logo check: round_logo='" << round_logo
+                     << "' is_round_start=" << is_round_start_logo
+                     << " is_round_end=" << is_round_end_logo
+                     << " min_interval_passed=" << min_interval_passed << endl;
 
-                // ラウンド開始ロゴ: round_index をインクリメントしてラウンドリセットと判定
+                                // ラウンド開始ロゴ: ラウンドが始まっただけなので round_index は変更しない
                 if (is_round_start_logo && min_interval_passed)
                 {
-                    impl->round_index++;
-                    out->hp_reset = 1;
-                    impl->last_reset_frame = impl->current_frame;
                     cout << "[Scanner] Round start logo detected: " << round_logo
                          << " at frame " << impl->current_frame
-                         << " -> round " << impl->round_index << endl;
+                                         << " (round " << impl->round_index << " started)" << endl;
                 }
-                // ラウンド終了ロゴ: round_index は変更せず、ラウンド終了のみ記録
+                                // ラウンド終了ロゴ: round_index をインクリメントして次のラウンドへ
                 else if (is_round_end_logo && min_interval_passed)
                 {
+                                    impl->round_index++;
+                                    out->hp_reset = 1;
                     impl->last_reset_frame = impl->current_frame;
                     cout << "[Scanner] Round end logo detected: " << round_logo
                          << " at frame " << impl->current_frame
-                         << " (round " << impl->round_index << " ended)" << endl;
+                                         << " -> round " << impl->round_index << endl;
                 }
                 // タイマーまたはHPリセットでラウンドリセット
                 else if ((timer_expired || hp_reset_detected) && min_interval_passed)
@@ -1448,6 +1761,18 @@ extern "C"
                 return -1;
             }
 
+            // Early termination: stop analysis after round start + a few frames
+            if (impl->stop_analysis)
+            {
+                impl->frames_after_round_start++;
+                if (impl->frames_after_round_start >= 5)
+                {
+                    cout << "[Scanner] Early termination: stopping analysis after round start + "
+                         << impl->frames_after_round_start << " frames" << endl;
+                    return 0; // End of video
+                }
+            }
+
             // フレームを読み込む（1パスで1フレームのみ）
             Mat frame;
             if (!impl->cap.read(frame) || frame.empty())
@@ -1507,15 +1832,19 @@ extern "C"
                 hp_p1 = gauges.hp_p1.value;
                 telemetry_out->drive_p1 = gauges.drive_p1.value * 6.0;
                 telemetry_out->sa_p1 = static_cast<int>(std::round(gauges.sa_p1.value * 3.0));
-                if (telemetry_out->sa_p1 < 0) telemetry_out->sa_p1 = 0;
-                if (telemetry_out->sa_p1 > 3) telemetry_out->sa_p1 = 3;
+                if (telemetry_out->sa_p1 < 0)
+                    telemetry_out->sa_p1 = 0;
+                if (telemetry_out->sa_p1 > 3)
+                    telemetry_out->sa_p1 = 3;
                 telemetry_out->in_burnout_p1 = gauges.in_burnout_p1 ? 1 : 0;
 
                 hp_p2 = gauges.hp_p2.value;
                 telemetry_out->drive_p2 = gauges.drive_p2.value * 6.0;
                 telemetry_out->sa_p2 = static_cast<int>(std::round(gauges.sa_p2.value * 3.0));
-                if (telemetry_out->sa_p2 < 0) telemetry_out->sa_p2 = 0;
-                if (telemetry_out->sa_p2 > 3) telemetry_out->sa_p2 = 3;
+                if (telemetry_out->sa_p2 < 0)
+                    telemetry_out->sa_p2 = 0;
+                if (telemetry_out->sa_p2 > 3)
+                    telemetry_out->sa_p2 = 3;
                 telemetry_out->in_burnout_p2 = gauges.in_burnout_p2 ? 1 : 0;
 
                 if (gauges.hp_p1.occluded)
@@ -1570,26 +1899,66 @@ extern "C"
                 bool hp_reset_p2 = (impl->prev_hp_p2 < impl->config.hp_reset_low_threshold && hp_p2 > impl->config.hp_reset_high_threshold);
                 bool hp_reset_detected = hp_reset_p1 || hp_reset_p2;
 
-                string round_logo = impl->match_round_logo(norm_result.normalized_frame,
-                    static_cast<int>(impl->config.canonical_width * 0.30),
-                    static_cast<int>(impl->config.canonical_width * 0.70),
-                    static_cast<int>(impl->config.canonical_height * 0.35),
-                    static_cast<int>(impl->config.canonical_height * 0.65));
+                // ラウンドロゴ検出: ユーザー指定位置 (x=580, y=462) 付近で round.png / final_round.png を検出
+                                // round.png は 500x175 サイズ。キャリブレーション時と同様に元のフレームで検索（正規化後の座標ズレを避けるため）
+                                const int round_roi_x = 580;
+                                const int round_roi_y = 462;
+                                const int round_roi_w = 500;
+                                const int round_roi_h = 175;
+                                const int search_margin = 50; // ±50ピクセルのマージンで位置ズレを吸収
+                                int round_x_start = std::max(0, round_roi_x - search_margin);
+                                int round_y_start = std::max(0, round_roi_y - search_margin);
+                                int round_x_end = std::min(frame.cols, round_roi_x + round_roi_w + search_margin);
+                                int round_y_end = std::min(frame.rows, round_roi_y + round_roi_h + search_margin);
+                
+                                // Debug: check frame at round logo position
+                                if (impl->current_frame < 5 || impl->current_frame % 100 == 0)
+                                {
+                                    cv::Mat debug_roi = frame.rowRange(round_y_start, round_y_end).colRange(round_x_start, round_x_end);
+                                    if (!debug_roi.empty())
+                                    {
+                                        cv::Mat debug_gray;
+                                        if (debug_roi.channels() == 3)
+                                            cv::cvtColor(debug_roi, debug_gray, cv::COLOR_BGR2GRAY);
+                                        else
+                                            debug_gray = debug_roi.clone();
+                                        cv::Scalar debug_mean = cv::mean(debug_gray);
+                                        double debug_min, debug_max;
+                                        cv::minMaxLoc(debug_gray, &debug_min, &debug_max);
+                                        cout << "[Scanner] Frame " << impl->current_frame 
+                                             << " round_roi mean=" << debug_mean[0] 
+                                             << " min=" << debug_min << " max=" << debug_max
+                                             << " roi=[" << round_x_start << "," << round_x_end << "]x[" << round_y_start << "," << round_y_end << "]" << endl;
+                                    }
+                                }
+                
+                                string round_logo = impl->match_round_logo(frame,
+                                                                           round_x_start,
+                                                                           round_x_end,
+                                                                           round_y_start,
+                                                                           round_y_end);
                 bool round_logo_detected = !round_logo.empty();
 
                 bool is_round_start_logo = (round_logo == "round" || round_logo == "final_round");
                 bool is_round_end_logo = (round_logo == "ko" || round_logo == "time_over");
                 bool min_interval_passed = (frames_since_reset >= impl->config.round_timer_gap_frames);
 
+                                // ラウンド開始ロゴ: ラウンドが始まっただけなので round_index は変更しない
                 if (is_round_start_logo && min_interval_passed)
                 {
-                    impl->round_index++;
-                    telemetry_out->hp_reset = 1;
-                    impl->last_reset_frame = impl->current_frame;
+                                    cout << "[Scanner] Round start logo detected: " << round_logo
+                                         << " at frame " << impl->current_frame
+                                         << " (round " << impl->round_index << " started)" << endl;
                 }
+                                // ラウンド終了ロゴ: round_index をインクリメントして次のラウンドへ
                 else if (is_round_end_logo && min_interval_passed)
                 {
+                                    impl->round_index++;
+                                    telemetry_out->hp_reset = 1;
                     impl->last_reset_frame = impl->current_frame;
+                                    cout << "[Scanner] Round end logo detected: " << round_logo
+                                         << " at frame " << impl->current_frame
+                                         << " -> round " << impl->round_index << endl;
                 }
                 else if ((timer_expired || hp_reset_detected) && min_interval_passed)
                 {
