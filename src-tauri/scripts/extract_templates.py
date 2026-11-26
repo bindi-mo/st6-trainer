@@ -113,6 +113,7 @@ CATEGORIES = {
             "ehonda",
             "deejay",
             "manon",
+            "marisa",
             "jp",
             "zangief",
             "lily",
@@ -137,9 +138,9 @@ CATEGORIES = {
     "8": (
         "round_logos",
         [
-            "round",      # "Round ?" の汎用テンプレート（ラウンド番号は不問）
-            "final_round", # "Final Round"
-            "ko",         # "K.O." - ラウンド終了検知用
+            "round",  # "Round ?" の汎用テンプレート（ラウンド番号は不問）
+            "final_round",  # "Final Round"
+            "ko",  # "K.O." - ラウンド終了検知用
             "time_over",  # "TIME OVER" - ラウンド終了検知用
         ],
     ),
