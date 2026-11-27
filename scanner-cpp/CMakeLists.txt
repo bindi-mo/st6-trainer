@@ -28,6 +28,10 @@ add_library(st6_scanner SHARED
     frame_meter.cpp
 )
 
+# Test executable
+add_executable(test_scanner test_scanner.cpp)
+target_link_libraries(test_scanner PRIVATE st6_scanner)
+
 # Configuring Include Directories
 target_include_directories(st6_scanner PRIVATE
     ${OpenCV_INSTALL_DIR}/include
@@ -85,5 +89,14 @@ if(WIN32)
         $<TARGET_FILE:st6_scanner>
         "${CMAKE_CURRENT_SOURCE_DIR}/../src-tauri/st6_scanner.dll"
         COMMENT "Copying scanner DLL to src-tauri for Tauri bundler"
+        || (echo Warning: Failed to copy DLL to src-tauri & exit 0)
     )
 endif()
+
+# Copy DLL to test output directory
+add_custom_command(TARGET test_scanner POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    $<TARGET_FILE:st6_scanner>
+    $<TARGET_FILE_DIR:test_scanner>
+    COMMENT "Copying scanner DLL to test output directory"
+)

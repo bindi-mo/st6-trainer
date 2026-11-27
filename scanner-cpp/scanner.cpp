@@ -164,11 +164,25 @@ struct ScannerImpl
 
     bool open_video(const char *path, const ScanConfig *cfg)
     {
-        cap.open(path);
+            // Try MSMF backend first for hardware decoding (DXVA2/D3D11VA on Windows)
+            cap.open(path, cv::CAP_MSMF);
         if (!cap.isOpened())
         {
-            last_error = "Failed to open video: " + string(path);
-            return false;
+                // Fallback to default backend (FFmpeg)
+                cap.open(path);
+                if (!cap.isOpened())
+                {
+                    last_error = "Failed to open video: " + string(path);
+                    return false;
+                }
+                else
+                {
+                    std::cerr << "[Scanner] Opened with default backend (FFmpeg)" << std::endl;
+                }
+            }
+            else
+            {
+                std::cerr << "[Scanner] Opened with MSMF backend (hardware decode via DXVA2/D3D11VA)" << std::endl;
         }
 
         fps = cap.get(CAP_PROP_FPS);
@@ -452,6 +466,164 @@ struct ScannerImpl
         return "";
     }
 
+    // 指定名テンプレートのサイズを動的に取得（見つからなければ false）
+    bool get_template_size(const string &name, int &w, int &h) const
+    {
+        for (const auto &tmpl : round_logo_templates)
+        {
+            if (tmpl.name == name)
+            {
+                w = static_cast<int>(tmpl.template_img.cols);
+                h = static_cast<int>(tmpl.template_img.rows);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // 指定テンプレートが ROI 内で検出されるか（スコアを返す、見つからなければ -1）
+    double match_single_template(const Mat &gray_roi, const string &name) const
+    {
+        for (const auto &tmpl : round_logo_templates)
+        {
+            if (tmpl.name != name)
+                continue;
+
+            Mat gray_tmpl;
+            if (tmpl.template_img.channels() == 3)
+                cvtColor(tmpl.template_img, gray_tmpl, COLOR_BGR2GRAY);
+            else
+                gray_tmpl = tmpl.template_img.clone();
+
+            if (gray_tmpl.cols > gray_roi.cols || gray_tmpl.rows > gray_roi.rows)
+                return -1.0;
+
+            Mat result_mat;
+            matchTemplate(gray_roi, gray_tmpl, result_mat, TM_CCOEFF_NORMED);
+            double min_val, max_val;
+            Point min_loc, max_loc;
+            minMaxLoc(result_mat, &min_val, &max_val, &min_loc, &max_loc);
+            return max_val;
+        }
+        return -1.0;
+    }
+
+    // ラウンド開始ロゴ（fight.png）を検出（スコアを返す、テンプレ無し/ROI外は -1）
+    // ROI サイズはテンプレートファイルから動的に取得する（固定値は使わない）
+    double detect_fight_logo(const Mat &frame, int roi_x, int roi_y) const
+    {
+        int w = 0, h = 0;
+        if (!get_template_size("fight", w, h) || w <= 0 || h <= 0)
+        {
+            cout << "[Scanner] detect_fight_logo: fight template not found or invalid size" << endl;
+            return -1.0;
+        }
+
+        const int margin = 50;
+        int x_start = std::max(0, roi_x - margin);
+        int y_start = std::max(0, roi_y - margin);
+        int x_end = std::min(frame.cols, roi_x + w + margin);
+        int y_end = std::min(frame.rows, roi_y + h + margin);
+        if (x_start >= x_end || y_start >= y_end)
+            return -1.0;
+
+        Mat roi = frame.rowRange(y_start, y_end).colRange(x_start, x_end);
+        if (roi.empty())
+            return -1.0;
+
+        Mat gray_roi;
+        if (roi.channels() == 3)
+            cvtColor(roi, gray_roi, COLOR_BGR2GRAY);
+        else
+            gray_roi = roi.clone();
+
+        return match_single_template(gray_roi, "fight");
+    }
+
+    // 毎フレームのラウンド検出（telemetry / all 共通）
+    // 戻り値: ラウンドリセット（round_index インクリメント）が発生したら true
+    bool update_round_state(const Mat &frame, double hp_p1, double hp_p2, int *hp_reset_out)
+    {
+        if (hp_reset_out)
+            *hp_reset_out = 0;
+
+        if (!round_initialized)
+        {
+            prev_hp_p1 = hp_p1;
+            prev_hp_p2 = hp_p2;
+            round_initialized = true;
+            last_reset_frame = current_frame;
+            // ラウンド1は最初の有効フレームから開始
+            return false;
+        }
+
+        int frames_since_reset = current_frame - last_reset_frame;
+
+        // タイマーベース: 99秒（5940フレーム）経過でラウンド終了と判定
+        bool timer_expired = (frames_since_reset >= config.round_duration_frames);
+
+        // HPリセット補完: HP が低値から高値にジャンプした場合
+        bool hp_reset_p1 = (prev_hp_p1 < config.hp_reset_low_threshold && hp_p1 > config.hp_reset_high_threshold);
+        bool hp_reset_p2 = (prev_hp_p2 < config.hp_reset_low_threshold && hp_p2 > config.hp_reset_high_threshold);
+        bool hp_reset_detected = hp_reset_p1 || hp_reset_p2;
+
+        // ラウンド開始ロゴ検出: fight.png（ユーザー指定位置 x=529, y=370、サイズはテンプレートから動的取得）
+        double fight_conf = detect_fight_logo(frame, 529, 370);
+        bool is_round_start_logo = (fight_conf > 0.60);
+
+        // ラウンド終了ロゴ検出: 既存の全テンプレートマッチング（ko / time_over）
+        string round_logo = match_round_logo(frame, 0, frame.cols, 0, frame.rows);
+        bool is_round_end_logo = (round_logo == "ko" || round_logo == "time_over");
+
+        // 最小間隔チェック（誤検出防止）
+        bool min_interval_passed = (frames_since_reset >= config.round_timer_gap_frames);
+
+        if (current_frame < 5 || current_frame % 100 == 0)
+        {
+            cout << "[Scanner] Round check: fight_conf=" << fight_conf
+                 << " start=" << is_round_start_logo
+                 << " end_logo='" << round_logo << "' end=" << is_round_end_logo
+                 << " min_interval_passed=" << min_interval_passed << endl;
+        }
+
+        bool reset = false;
+
+        // ラウンド開始ロゴ（fight.png）: ラウンドが始まっただけなので round_index は変更しない
+        if (is_round_start_logo && min_interval_passed)
+        {
+            cout << "[Scanner] Round start logo detected: fight"
+                 << " at frame " << current_frame
+                 << " (round " << round_index << " started)" << endl;
+        }
+        // ラウンド終了ロゴ: round_index をインクリメントして次のラウンドへ
+        else if (is_round_end_logo && min_interval_passed)
+        {
+            round_index++;
+            last_reset_frame = current_frame;
+            reset = true;
+            cout << "[Scanner] Round end logo detected: " << round_logo
+                 << " at frame " << current_frame
+                 << " -> round " << round_index << endl;
+        }
+        // タイマーまたはHPリセットでラウンドリセット
+        else if ((timer_expired || hp_reset_detected) && min_interval_passed)
+        {
+            round_index++;
+            last_reset_frame = current_frame;
+            reset = true;
+            cout << "[Scanner] Round reset detected at frame " << current_frame
+                 << " -> round " << round_index
+                 << " (timer=" << timer_expired << ", hp_reset=" << hp_reset_detected << ")" << endl;
+        }
+
+        prev_hp_p1 = hp_p1;
+        prev_hp_p2 = hp_p2;
+
+        if (reset && hp_reset_out)
+            *hp_reset_out = 1;
+        return reset;
+    }
+
     // Match character name against templates (Phase 5)
     string match_character_name(const Mat &frame, int x_start, int x_end, int y_start, int y_end)
     {
@@ -589,8 +761,8 @@ struct ScannerImpl
 
         if (!has_first_frame)
         {
-            // ラウンド開始フレームを動的に検出（round.png または final_round.png でテンプレートマッチング）
-            // ユーザー指定位置: round.png x=578, y=461 / ko.png x=627, y=351
+            // ラウンド開始フレームを動的に検出（fight.png でテンプレートマッチング）
+            // ユーザー指定位置: fight.png x=529, y=370（サイズはテンプレートから動的取得）
             // 1000フレーム以内に検出できなければエラー
             Mat frame;
             int max_attempts = 1000;
@@ -599,6 +771,20 @@ struct ScannerImpl
 
             // ラウンドロゴテンプレートを読み込み
             load_round_logo_templates();
+
+            // fight.png のサイズをテンプレートから動的に取得（固定値は使わない）
+            int fight_w = 0, fight_h = 0;
+            if (!get_template_size("fight", fight_w, fight_h) || fight_w <= 0 || fight_h <= 0)
+            {
+                g_last_error = "fight.png template not found or invalid size";
+                cout << "[Scanner] Error: " << g_last_error << endl;
+                return false;
+            }
+            const int fight_x = 529;
+            const int fight_y = 370;
+            const int fight_margin = 50;
+            cout << "[Scanner] fight.png template size=" << fight_w << "x" << fight_h
+                 << " roi origin=(" << fight_x << "," << fight_y << ")" << endl;
 
             bool found_round_start = false;
             int round_start_frame = -1;
@@ -610,69 +796,32 @@ struct ScannerImpl
                     break;
                 }
 
-                // ラウンドロゴを検出（ユーザー指定位置付近: x=578, y=461）
-                // テンプレート画像から実際のサイズを取得
-                int logo_x = 578;
-                int logo_y = 461;
-                int logo_w = 500; // デフォルト値
-                int logo_h = 175; // デフォルト値
-                for (const auto &rtmpl : this->round_logo_templates)
-                {
-                    if (rtmpl.name == "round")
-                    {
-                        logo_w = static_cast<int>(rtmpl.template_img.cols);
-                        logo_h = static_cast<int>(rtmpl.template_img.rows);
-                        break;
-                    }
-                }
+                int x_start = std::max(0, fight_x - fight_margin);
+                int y_start = std::max(0, fight_y - fight_margin);
+                int x_end = std::min(frame.cols, fight_x + fight_w + fight_margin);
+                int y_end = std::min(frame.rows, fight_y + fight_h + fight_margin);
+                if (x_start >= x_end || y_start >= y_end)
+                    continue;
 
-                int logo_x_start = std::max(0, logo_x - 50);
-                int logo_y_start = std::max(0, logo_y - 50);
-                int logo_x_end = std::min(frame.cols, logo_x + logo_w + 50);
-                int logo_y_end = std::min(frame.rows, logo_y + logo_h + 50);
-
-                Mat logo_roi = frame.rowRange(logo_y_start, logo_y_end).colRange(logo_x_start, logo_x_end);
-                if (logo_roi.empty())
+                Mat roi = frame.rowRange(y_start, y_end).colRange(x_start, x_end);
+                if (roi.empty())
                     continue;
 
                 Mat gray_roi;
-                if (logo_roi.channels() == 3)
-                    cvtColor(logo_roi, gray_roi, COLOR_BGR2GRAY);
+                if (roi.channels() == 3)
+                    cvtColor(roi, gray_roi, COLOR_BGR2GRAY);
                 else
-                    gray_roi = logo_roi.clone();
+                    gray_roi = roi.clone();
 
-                for (const auto &rtmpl : round_logo_templates)
+                double conf = match_single_template(gray_roi, "fight");
+                if (conf > 0.60)
                 {
-                    if (rtmpl.name != "round" && rtmpl.name != "final_round")
-                        continue;
-
-                    Mat gray_tmpl;
-                    if (rtmpl.template_img.channels() == 3)
-                        cvtColor(rtmpl.template_img, gray_tmpl, COLOR_BGR2GRAY);
-                    else
-                        gray_tmpl = rtmpl.template_img.clone();
-
-                    if (gray_tmpl.cols > gray_roi.cols || gray_tmpl.rows > gray_roi.rows)
-                        continue;
-
-                    Mat result_mat;
-                    matchTemplate(gray_roi, gray_tmpl, result_mat, TM_CCOEFF_NORMED);
-                    double min_val, max_val;
-                    Point min_loc, max_loc;
-                    minMaxLoc(result_mat, &min_val, &max_val, &min_loc, &max_loc);
-
-                    if (max_val > 0.50)
-                    {
-                        round_start_frame = i;
-                        found_round_start = true;
-                        cout << "[Scanner] Round start detected at frame " << i
-                             << " (logo=" << rtmpl.name << ", conf=" << max_val << ")" << endl;
-                        break;
-                    }
-                }
-
-                if (found_round_start)
+                    round_start_frame = i;
+                    found_round_start = true;
+                    cout << "[Scanner] Round start detected at frame " << i
+                         << " (logo=fight, conf=" << conf << ")" << endl;
                     break;
+                }
 
                 if (i < 5 || (i + 1) % 100 == 0)
                 {
@@ -1318,125 +1467,10 @@ extern "C"
             out->hp_p2 = hp_p2;
 
             // Phase 5: Round detection via timer (99秒カウントダウン) + HP reset 補完 + ラウンドロゴ検出
-            if (!impl->round_initialized)
-            {
-                impl->prev_hp_p1 = hp_p1;
-                impl->prev_hp_p2 = hp_p2;
-                impl->round_initialized = true;
-                impl->last_reset_frame = impl->current_frame;
-                // ラウンド1は最初の有効フレームから開始
-            }
-            else
-            {
-                int frames_since_reset = impl->current_frame - impl->last_reset_frame;
-
-                // タイマーベース: 99秒（5940フレーム）経過でラウンド終了と判定
-                bool timer_expired = (frames_since_reset >= impl->config.round_duration_frames);
-
-                // HPリセット補完: HP が低値から高値にジャンプした場合
-                bool hp_reset_p1 = (impl->prev_hp_p1 < impl->config.hp_reset_low_threshold && hp_p1 > impl->config.hp_reset_high_threshold);
-                bool hp_reset_p2 = (impl->prev_hp_p2 < impl->config.hp_reset_low_threshold && hp_p2 > impl->config.hp_reset_high_threshold);
-                bool hp_reset_detected = hp_reset_p1 || hp_reset_p2;
-
-                // ラウンドロゴ検出: ユーザー指定位置 (x=580, y=462) 付近で round.png / final_round.png を検出
-                // テンプレート画像から実際のサイズを取得（正規化後の座標ズレを避けるため元のフレームで検索）
-                const int round_roi_x = 580;
-                const int round_roi_y = 462;
-                int round_roi_w = 500; // デフォルト値
-                int round_roi_h = 175; // デフォルト値
-                                       // 読み込まれたテンプレートから実際のサイズを取得
-                for (const auto &rtmpl : impl->round_logo_templates)
-                {
-                    if (rtmpl.name == "round")
-                    {
-                        round_roi_w = static_cast<int>(rtmpl.template_img.cols);
-                        round_roi_h = static_cast<int>(rtmpl.template_img.rows);
-                        break;
-                    }
-                }
-                const int search_margin = 50; // ±50ピクセルのマージンで位置ズレを吸収
-                int round_x_start = std::max(0, round_roi_x - search_margin);
-                int round_y_start = std::max(0, round_roi_y - search_margin);
-                int round_x_end = std::min(frame.cols, round_roi_x + round_roi_w + search_margin);
-                int round_y_end = std::min(frame.rows, round_roi_y + round_roi_h + search_margin);
-
-                // Debug: check frame at round logo position
-                if (impl->current_frame < 5 || impl->current_frame % 100 == 0)
-                {
-                    cv::Mat debug_roi = frame.rowRange(round_y_start, round_y_end).colRange(round_x_start, round_x_end);
-                    if (!debug_roi.empty())
-                    {
-                        cv::Mat debug_gray;
-                        if (debug_roi.channels() == 3)
-                            cv::cvtColor(debug_roi, debug_gray, cv::COLOR_BGR2GRAY);
-                        else
-                            debug_gray = debug_roi.clone();
-                        cv::Scalar debug_mean = cv::mean(debug_gray);
-                        double debug_min, debug_max;
-                        cv::minMaxLoc(debug_gray, &debug_min, &debug_max);
-                        cout << "[Scanner] Frame " << impl->current_frame
-                             << " round_roi mean=" << debug_mean[0]
-                             << " min=" << debug_min << " max=" << debug_max
-                             << " roi=[" << round_x_start << "," << round_x_end << "]x[" << round_y_start << "," << round_y_end << "]"
-                             << " template_size=" << round_roi_w << "x" << round_roi_h << endl;
-                    }
-                }
-
-                string round_logo = impl->match_round_logo(frame,
-                                                           round_x_start,
-                                                           round_x_end,
-                                                           round_y_start,
-                                                           round_y_end);
-                bool round_logo_detected = !round_logo.empty();
-
-                if (round_logo_detected)
-                {
-                    cout << "[Scanner] Round logo detected: '" << round_logo << "' at frame " << impl->current_frame << endl;
-                }
-
-                // 最小間隔チェック（誤検出防止）
-                bool min_interval_passed = (frames_since_reset >= impl->config.round_timer_gap_frames);
-
-                // ラウンド開始ロゴかラウンド終了ロゴかを区別
-                bool is_round_start_logo = (round_logo == "round" || round_logo == "final_round");
-                bool is_round_end_logo = (round_logo == "ko" || round_logo == "time_over");
-
-                cout << "[Scanner] Round logo check: round_logo='" << round_logo
-                     << "' is_round_start=" << is_round_start_logo
-                     << " is_round_end=" << is_round_end_logo
-                     << " min_interval_passed=" << min_interval_passed << endl;
-
-                // ラウンド開始ロゴ: ラウンドが始まっただけなので round_index は変更しない
-                if (is_round_start_logo && min_interval_passed)
-                {
-                    cout << "[Scanner] Round start logo detected: " << round_logo
-                         << " at frame " << impl->current_frame
-                         << " (round " << impl->round_index << " started)" << endl;
-                }
-                // ラウンド終了ロゴ: round_index をインクリメントして次のラウンドへ
-                else if (is_round_end_logo && min_interval_passed)
-                {
-                    impl->round_index++;
-                    out->hp_reset = 1;
-                    impl->last_reset_frame = impl->current_frame;
-                    cout << "[Scanner] Round end logo detected: " << round_logo
-                         << " at frame " << impl->current_frame
-                         << " -> round " << impl->round_index << endl;
-                }
-                // タイマーまたはHPリセットでラウンドリセット
-                else if ((timer_expired || hp_reset_detected) && min_interval_passed)
-                {
-                    impl->round_index++;
-                    out->hp_reset = 1;
-                    impl->last_reset_frame = impl->current_frame;
-                    cout << "[Scanner] Round reset detected at frame " << impl->current_frame
-                         << " -> round " << impl->round_index
-                         << " (timer=" << timer_expired << ", hp_reset=" << hp_reset_detected << ")" << endl;
-                }
-
-                impl->prev_hp_p1 = hp_p1;
-                impl->prev_hp_p2 = hp_p2;
-            }
+            int hp_reset_flag = 0;
+            impl->update_round_state(frame, hp_p1, hp_p2, &hp_reset_flag);
+            if (hp_reset_flag)
+                out->hp_reset = 1;
 
             out->quality_flags_count = std::min(out->quality_flags_count, 16);
 
@@ -1905,103 +1939,10 @@ extern "C"
             telemetry_out->hp_p2 = hp_p2;
 
             // ラウンド検出（telemetryと同じロジック）
-            if (!impl->round_initialized)
-            {
-                impl->prev_hp_p1 = hp_p1;
-                impl->prev_hp_p2 = hp_p2;
-                impl->round_initialized = true;
-                impl->last_reset_frame = impl->current_frame;
-            }
-            else
-            {
-                int frames_since_reset = impl->current_frame - impl->last_reset_frame;
-                bool timer_expired = (frames_since_reset >= impl->config.round_duration_frames);
-                bool hp_reset_p1 = (impl->prev_hp_p1 < impl->config.hp_reset_low_threshold && hp_p1 > impl->config.hp_reset_high_threshold);
-                bool hp_reset_p2 = (impl->prev_hp_p2 < impl->config.hp_reset_low_threshold && hp_p2 > impl->config.hp_reset_high_threshold);
-                bool hp_reset_detected = hp_reset_p1 || hp_reset_p2;
-
-                // ラウンドロゴ検出: ユーザー指定位置 (x=580, y=462) 付近で round.png / final_round.png を検出
-                // テンプレート画像から実際のサイズを取得（正規化後の座標ズレを避けるため元のフレームで検索）
-                const int round_roi_x = 580;
-                const int round_roi_y = 462;
-                int round_roi_w = 500; // デフォルト値
-                int round_roi_h = 175; // デフォルト値
-                                       // 読み込まれたテンプレートから実際のサイズを取得
-                for (const auto &rtmpl : impl->round_logo_templates)
-                {
-                    if (rtmpl.name == "round")
-                    {
-                        round_roi_w = static_cast<int>(rtmpl.template_img.cols);
-                        round_roi_h = static_cast<int>(rtmpl.template_img.rows);
-                        break;
-                    }
-                }
-                const int search_margin = 50; // ±50ピクセルのマージンで位置ズレを吸収
-                int round_x_start = std::max(0, round_roi_x - search_margin);
-                int round_y_start = std::max(0, round_roi_y - search_margin);
-                int round_x_end = std::min(frame.cols, round_roi_x + round_roi_w + search_margin);
-                int round_y_end = std::min(frame.rows, round_roi_y + round_roi_h + search_margin);
-
-                // Debug: check frame at round logo position
-                if (impl->current_frame < 5 || impl->current_frame % 100 == 0)
-                {
-                    cv::Mat debug_roi = frame.rowRange(round_y_start, round_y_end).colRange(round_x_start, round_x_end);
-                    if (!debug_roi.empty())
-                    {
-                        cv::Mat debug_gray;
-                        if (debug_roi.channels() == 3)
-                            cv::cvtColor(debug_roi, debug_gray, cv::COLOR_BGR2GRAY);
-                        else
-                            debug_gray = debug_roi.clone();
-                        cv::Scalar debug_mean = cv::mean(debug_gray);
-                        double debug_min, debug_max;
-                        cv::minMaxLoc(debug_gray, &debug_min, &debug_max);
-                        cout << "[Scanner] Frame " << impl->current_frame
-                             << " round_roi mean=" << debug_mean[0]
-                             << " min=" << debug_min << " max=" << debug_max
-                             << " roi=[" << round_x_start << "," << round_x_end << "]x[" << round_y_start << "," << round_y_end << "]"
-                             << " template_size=" << round_roi_w << "x" << round_roi_h << endl;
-                    }
-                }
-
-                string round_logo = impl->match_round_logo(frame,
-                                                           round_x_start,
-                                                           round_x_end,
-                                                           round_y_start,
-                                                           round_y_end);
-                bool round_logo_detected = !round_logo.empty();
-
-                bool is_round_start_logo = (round_logo == "round" || round_logo == "final_round");
-                bool is_round_end_logo = (round_logo == "ko" || round_logo == "time_over");
-                bool min_interval_passed = (frames_since_reset >= impl->config.round_timer_gap_frames);
-
-                // ラウンド開始ロゴ: ラウンドが始まっただけなので round_index は変更しない
-                if (is_round_start_logo && min_interval_passed)
-                {
-                    cout << "[Scanner] Round start logo detected: " << round_logo
-                         << " at frame " << impl->current_frame
-                         << " (round " << impl->round_index << " started)" << endl;
-                }
-                // ラウンド終了ロゴ: round_index をインクリメントして次のラウンドへ
-                else if (is_round_end_logo && min_interval_passed)
-                {
-                    impl->round_index++;
-                    telemetry_out->hp_reset = 1;
-                    impl->last_reset_frame = impl->current_frame;
-                    cout << "[Scanner] Round end logo detected: " << round_logo
-                         << " at frame " << impl->current_frame
-                         << " -> round " << impl->round_index << endl;
-                }
-                else if ((timer_expired || hp_reset_detected) && min_interval_passed)
-                {
-                    impl->round_index++;
-                    telemetry_out->hp_reset = 1;
-                    impl->last_reset_frame = impl->current_frame;
-                }
-
-                impl->prev_hp_p1 = hp_p1;
-                impl->prev_hp_p2 = hp_p2;
-            }
+            int hp_reset_flag = 0;
+            impl->update_round_state(frame, hp_p1, hp_p2, &hp_reset_flag);
+            if (hp_reset_flag)
+                telemetry_out->hp_reset = 1;
 
             telemetry_out->quality_flags_count = std::min(telemetry_out->quality_flags_count, 16);
 
