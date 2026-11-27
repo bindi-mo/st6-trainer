@@ -145,7 +145,7 @@ struct ScannerImpl
                     char_templates_loaded(false),
                     round_logo_templates_loaded(false),
                     prev_hp_p1(1.0), prev_hp_p2(1.0),
-                    round_index(1),
+                    round_index(0),
                     round_initialized(false),
                     last_reset_frame(0),
                     character_names_detected(false),
@@ -551,31 +551,30 @@ struct ScannerImpl
 
         bool reset = false;
 
-        // ラウンド開始ロゴ（fight.png）: ラウンドが始まっただけなので round_index は変更しない
+        // ラウンド開始ロゴ（fight.png）: ラウンドが始まったので round_index をインクリメント
         if (is_round_start_logo && min_interval_passed)
         {
+            round_index++; // ラウンド開始（0→1→2→3…）
             cout << "[Scanner] Round start logo detected: fight"
                  << " at frame " << current_frame
                  << " (round " << round_index << " started)" << endl;
         }
-        // ラウンド終了ロゴ: round_index をインクリメントして次のラウンドへ
+        // ラウンド終了ロゴ: ラウンド終了を検知（round_index は開始時にカウントアップするため変更しない）
         else if (is_round_end_logo && min_interval_passed)
         {
-            round_index++;
             last_reset_frame = current_frame;
             reset = true;
             cout << "[Scanner] Round end logo detected: " << round_logo
                  << " at frame " << current_frame
-                 << " -> round " << round_index << endl;
+                 << " (round " << round_index << " ended)" << endl;
         }
-        // タイマーまたはHPリセットでラウンドリセット
+        // タイマーまたはHPリセットでラウンドリセット（round_index は開始時にカウントアップするため変更しない）
         else if ((timer_expired || hp_reset_detected) && min_interval_passed)
         {
-            round_index++;
             last_reset_frame = current_frame;
             reset = true;
             cout << "[Scanner] Round reset detected at frame " << current_frame
-                 << " -> round " << round_index
+                 << " (round " << round_index
                  << " (timer=" << timer_expired << ", hp_reset=" << hp_reset_detected << ")" << endl;
         }
 

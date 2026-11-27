@@ -64,7 +64,7 @@ fn run(video: &std::path::Path) -> Result<(), String> {
         }
         if t.round_index != prev_round {
             println!(
-                "round end: round {} -> {} at frame {}",
+                "round change: round {} -> {} at frame {}",
                 prev_round, t.round_index, t.frame_index
             );
             prev_round = t.round_index;
