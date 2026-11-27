@@ -164,25 +164,25 @@ struct ScannerImpl
 
     bool open_video(const char *path, const ScanConfig *cfg)
     {
-            // Try MSMF backend first for hardware decoding (DXVA2/D3D11VA on Windows)
-            cap.open(path, cv::CAP_MSMF);
+        // Try MSMF backend first for hardware decoding (DXVA2/D3D11VA on Windows)
+        cap.open(path, cv::CAP_MSMF);
         if (!cap.isOpened())
         {
-                // Fallback to default backend (FFmpeg)
-                cap.open(path);
-                if (!cap.isOpened())
-                {
-                    last_error = "Failed to open video: " + string(path);
-                    return false;
-                }
-                else
-                {
-                    std::cerr << "[Scanner] Opened with default backend (FFmpeg)" << std::endl;
-                }
+            // Fallback to default backend (FFmpeg)
+            cap.open(path);
+            if (!cap.isOpened())
+            {
+                last_error = "Failed to open video: " + string(path);
+                return false;
             }
             else
             {
-                std::cerr << "[Scanner] Opened with MSMF backend (hardware decode via DXVA2/D3D11VA)" << std::endl;
+                std::cerr << "[Scanner] Opened with default backend (FFmpeg)" << std::endl;
+            }
+        }
+        else
+        {
+            std::cerr << "[Scanner] Opened with MSMF backend (hardware decode via DXVA2/D3D11VA)" << std::endl;
         }
 
         fps = cap.get(CAP_PROP_FPS);
@@ -318,7 +318,6 @@ struct ScannerImpl
                     ctmpl.name = entry.path().stem().string();
                     ctmpl.template_img = tmpl;
                     char_templates.push_back(move(ctmpl));
-                    cout << "[Scanner] Loaded char template: " << ctmpl.name << endl;
                 }
             }
         }
@@ -339,19 +338,11 @@ struct ScannerImpl
 
         namespace fs = std::filesystem;
         fs::path logos_dir = fs::path(template_pack_path) / "round_logos";
-        cout << "[Scanner] load_round_logo_templates: Looking for round logos at: " << logos_dir << endl;
-        cout << "[Scanner] load_round_logo_templates: template_pack_path: " << template_pack_path << endl;
         if (!fs::exists(logos_dir))
         {
             cout << "[Scanner] load_round_logo_templates: Round logos directory not found: " << logos_dir << endl;
             round_logo_templates_loaded = true;
             return;
-        }
-        cout << "[Scanner] load_round_logo_templates: Round logos directory found!" << endl;
-        cout << "[Scanner] load_round_logo_templates: Directory contents:" << endl;
-        for (const auto &entry : fs::directory_iterator(logos_dir))
-        {
-            cout << "[Scanner] load_round_logo_templates:   " << entry.path().filename().string() << endl;
         }
 
         for (const auto &entry : fs::directory_iterator(logos_dir))
@@ -360,16 +351,13 @@ struct ScannerImpl
             {
                 string full_path = entry.path().string();
                 string stem = entry.path().stem().string();
-                cout << "[Scanner] Found round logo file: " << full_path << " stem: '" << stem << "'" << endl;
                 Mat tmpl = imread(full_path, IMREAD_COLOR);
                 if (!tmpl.empty())
                 {
                     CharNameTemplate ctmpl;
                     ctmpl.name = stem;
                     ctmpl.template_img = tmpl;
-                    cout << "[Scanner] Before push: ctmpl.name = '" << ctmpl.name << "'" << endl;
                     round_logo_templates.push_back(move(ctmpl));
-                    cout << "[Scanner] Loaded round logo template: '" << stem << "'" << endl;
                 }
                 else
                 {
@@ -392,7 +380,7 @@ struct ScannerImpl
     {
         static int call_count = 0;
         call_count++;
-        cout << "[Scanner] match_round_logo #" << call_count << ": called with x=[" << x_start << "," << x_end << "] y=[" << y_start << "," << y_end << "] frame_size=" << frame.cols << "x" << frame.rows << " templates_count=" << round_logo_templates.size() << endl;
+        // cout << "[Scanner] match_round_logo #" << call_count << ": called with x=[" << x_start << "," << x_end << "] y=[" << y_start << "," << y_end << "] frame_size=" << frame.cols << "x" << frame.rows << " templates_count=" << round_logo_templates.size() << endl;
         if (round_logo_templates.empty())
         {
             cout << "[Scanner] match_round_logo: no templates loaded!" << endl;
@@ -412,10 +400,6 @@ struct ScannerImpl
         else
             gray_roi = roi.clone();
 
-        // Debug: print ROI mean pixel value
-        Scalar roi_mean = mean(gray_roi);
-        cout << "[Scanner] match_round_logo: ROI mean pixel value = " << roi_mean[0] << endl;
-
         double best_conf = 0.0;
         string best_name;
 
@@ -430,26 +414,14 @@ struct ScannerImpl
             // テンプレートが ROI より大きい場合はスキップ
             if (gray_tmpl.cols > gray_roi.cols || gray_tmpl.rows > gray_roi.rows)
             {
-                cout << "[Scanner] match_round_logo: template " << tmpl.name << " too large (" << gray_tmpl.cols << "x" << gray_tmpl.rows << " > " << gray_roi.cols << "x" << gray_roi.rows << ")" << endl;
                 continue;
             }
-
-            // Debug: print template mean pixel value
-            Scalar tmpl_mean = mean(gray_tmpl);
-            cout << "[Scanner] match_round_logo: template " << tmpl.name << " mean pixel value = " << tmpl_mean[0] << endl;
 
             Mat result;
             matchTemplate(gray_roi, gray_tmpl, result, TM_CCOEFF_NORMED);
             double min_val, max_val;
             Point min_loc, max_loc;
             minMaxLoc(result, &min_val, &max_val, &min_loc, &max_loc);
-
-            // Debug: print result matrix stats
-            double result_min, result_max;
-            cv::minMaxLoc(result, &result_min, &result_max);
-            cout << "[Scanner] match_round_logo: template=" << tmpl.name << " conf=" << max_val
-                 << " result_range=[" << result_min << "," << result_max << "]"
-                 << " tmpl_size=" << gray_tmpl.cols << "x" << gray_tmpl.rows << endl;
 
             if (max_val > best_conf)
             {
@@ -459,7 +431,6 @@ struct ScannerImpl
         }
 
         // 信頼度閾値（0.85 以上でマッチとみなす）
-        cout << "[Scanner] match_round_logo: best_conf=" << best_conf << " best_name=" << best_name << " roi_size=" << gray_roi.cols << "x" << gray_roi.rows << endl;
         if (best_conf > 0.85)
             return best_name;
 
@@ -577,14 +548,6 @@ struct ScannerImpl
 
         // 最小間隔チェック（誤検出防止）
         bool min_interval_passed = (frames_since_reset >= config.round_timer_gap_frames);
-
-        if (current_frame < 5 || current_frame % 100 == 0)
-        {
-            cout << "[Scanner] Round check: fight_conf=" << fight_conf
-                 << " start=" << is_round_start_logo
-                 << " end_logo='" << round_logo << "' end=" << is_round_end_logo
-                 << " min_interval_passed=" << min_interval_passed << endl;
-        }
 
         bool reset = false;
 
@@ -821,11 +784,6 @@ struct ScannerImpl
                     cout << "[Scanner] Round start detected at frame " << i
                          << " (logo=fight, conf=" << conf << ")" << endl;
                     break;
-                }
-
-                if (i < 5 || (i + 1) % 100 == 0)
-                {
-                    cout << "[Scanner] Searching round start at frame " << i << endl;
                 }
             }
 
