@@ -143,6 +143,7 @@ CATEGORIES = {
             "final_round",  # "Final Round"
             "ko",  # "K.O." - ラウンド終了検知用
             "time_over",  # "TIME OVER" - ラウンド終了検知用
+            "wins",
         ],
     ),
 }
