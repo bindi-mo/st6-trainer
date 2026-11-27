@@ -19,7 +19,7 @@ pub fn manifest_dir() -> PathBuf {
 
 /// Replay video used by the runtime examples, if present.
 pub fn find_replay() -> Option<PathBuf> {
-    let p = manifest_dir().join("videos/replay_00.mkv");
+    let p = manifest_dir().join("videos/replay_01.mkv");
     if p.exists() { Some(p) } else { None }
 }
 

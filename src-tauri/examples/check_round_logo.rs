@@ -72,6 +72,7 @@ fn run(video: &std::path::Path) -> Result<(), String> {
 
         if t.frame_index >= EXPECTED_ROUND_START_FRAME && detected_frame.is_none() {
             detected_frame = Some(t.frame_index);
+            break;
         }
 
         if count >= MAX_FRAMES {
